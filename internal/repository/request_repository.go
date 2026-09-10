@@ -115,7 +115,11 @@ func (r *RequestRepository) ListInbox(ctx context.Context, userID string, page, 
 	}
 	defer rows.Close()
 
-	var out []InboxItem
+	// Initialized, not nil — see application_repository.go's List for why.
+	// This is the exact endpoint the portal's inbox page hit: an empty
+	// inbox (total=0) returned {"items": null}, and the page treats
+	// items === null as "still loading", so it hung on the skeleton forever.
+	out := []InboxItem{}
 	for rows.Next() {
 		var item InboxItem
 		var payloadJSON string
@@ -194,7 +198,8 @@ func (r *RequestRepository) listSteps(ctx context.Context, requestID string) ([]
 	}
 	defer rows.Close()
 
-	var out []domain.ApprovalStep
+	// Initialized, not nil — see application_repository.go's List for why.
+	out := []domain.ApprovalStep{}
 	for rows.Next() {
 		var s domain.ApprovalStep
 		var activatedAt, completedAt sql.NullString
@@ -270,7 +275,8 @@ func (r *RequestRepository) ListAssignmentsByStep(ctx context.Context, stepID st
 	}
 	defer rows.Close()
 
-	var out []domain.ApprovalAssignment
+	// Initialized, not nil — see application_repository.go's List for why.
+	out := []domain.ApprovalAssignment{}
 	for rows.Next() {
 		a, err := scanAssignment(rows)
 		if err != nil {

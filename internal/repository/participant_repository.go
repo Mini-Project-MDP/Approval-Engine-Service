@@ -45,7 +45,8 @@ func (r *ParticipantRepository) FindByPosition(ctx context.Context, position, de
 	}
 	defer rows.Close()
 
-	var out []domain.Participant
+	// Initialized, not nil — see application_repository.go's List for why.
+	out := []domain.Participant{}
 	for rows.Next() {
 		p, err := scanParticipant(rows)
 		if err != nil {
@@ -137,7 +138,8 @@ func (r *ParticipantRepository) List(ctx context.Context, page, limit int) ([]do
 	}
 	defer rows.Close()
 
-	var out []domain.Participant
+	// Initialized, not nil — see application_repository.go's List for why.
+	out := []domain.Participant{}
 	for rows.Next() {
 		p, err := scanParticipant(rows)
 		if err != nil {

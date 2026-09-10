@@ -88,7 +88,8 @@ func (r *WorkflowRepository) ListDefinitions(ctx context.Context, appID string, 
 	}
 	defer rows.Close()
 
-	var out []domain.WorkflowDefinition
+	// Initialized, not nil — see application_repository.go's List for why.
+	out := []domain.WorkflowDefinition{}
 	for rows.Next() {
 		def, err := scanDefinition(rows)
 		if err != nil {
@@ -210,7 +211,8 @@ func (r *WorkflowRepository) loadSteps(ctx context.Context, definitionID string)
 	}
 	defer rows.Close()
 
-	var out []domain.WorkflowStep
+	// Initialized, not nil — see application_repository.go's List for why.
+	out := []domain.WorkflowStep{}
 	for rows.Next() {
 		var s domain.WorkflowStep
 		var ruleJSON string

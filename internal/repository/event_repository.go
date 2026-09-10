@@ -45,7 +45,8 @@ func (r *EventRepository) ListByRequest(ctx context.Context, requestID string) (
 	}
 	defer rows.Close()
 
-	var out []domain.ApprovalEvent
+	// Initialized, not nil — see application_repository.go's List for why.
+	out := []domain.ApprovalEvent{}
 	for rows.Next() {
 		var ev domain.ApprovalEvent
 		var stepID, actorID sql.NullString

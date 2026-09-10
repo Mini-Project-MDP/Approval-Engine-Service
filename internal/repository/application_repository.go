@@ -59,7 +59,13 @@ func (r *ApplicationRepository) List(ctx context.Context, page, limit int) ([]do
 	}
 	defer rows.Close()
 
-	var out []domain.Application
+	// Initialized rather than a nil `var out []domain.Application`: a nil
+	// slice marshals to JSON `null`, and response.Page.Items has no
+	// `omitempty` — an empty page would send {"items": null} instead of
+	// {"items": []}, which broke every list page's "still loading vs.
+	// genuinely empty" check on the frontend (they use items === null as
+	// the loading sentinel).
+	out := []domain.Application{}
 	for rows.Next() {
 		var a domain.Application
 		var isActive int64
