@@ -1,0 +1,731 @@
+basePath: /api/v1
+definitions:
+  approval-engine-service_internal_domain.Application:
+    properties:
+      api_key:
+        type: string
+      code:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      name:
+        type: string
+    type: object
+  approval-engine-service_internal_domain.ApprovalAssignment:
+    properties:
+      acted_at:
+        type: string
+      comment:
+        type: string
+      id:
+        type: string
+      request_id:
+        type: string
+      status:
+        type: string
+      step_id:
+        type: string
+      user_id:
+        type: string
+      user_name:
+        type: string
+      user_position:
+        type: string
+    type: object
+  approval-engine-service_internal_domain.ApprovalRequest:
+    properties:
+      app_id:
+        type: string
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      current_step_order:
+        type: integer
+      definition_id:
+        type: string
+      doc_type:
+        type: string
+      id:
+        type: string
+      payload:
+        additionalProperties: {}
+        type: object
+      requester_id:
+        type: string
+      resource_id:
+        type: string
+      status:
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalStep'
+        type: array
+    type: object
+  approval-engine-service_internal_domain.ApprovalStep:
+    properties:
+      activated_at:
+        type: string
+      approval_mode:
+        type: string
+      assignments:
+        items:
+          $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalAssignment'
+        type: array
+      completed_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      request_id:
+        type: string
+      status:
+        type: string
+      step_order:
+        type: integer
+    type: object
+  approval-engine-service_internal_domain.Condition:
+    properties:
+      field:
+        type: string
+      op:
+        description: eq, ne, gt, gte, lt, lte, in
+        type: string
+      value: {}
+    type: object
+  approval-engine-service_internal_domain.Participant:
+    properties:
+      department:
+        type: string
+      email:
+        type: string
+      is_active:
+        type: boolean
+      name:
+        type: string
+      position:
+        type: string
+      superior_id:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  approval-engine-service_internal_domain.ResolverRule:
+    properties:
+      department:
+        description: 'role: explicit = cross-function hop'
+        type: string
+      level:
+        description: superior
+        type: integer
+      path:
+        description: 'field: key inside the request payload'
+        type: string
+      position:
+        description: role
+        type: string
+      scope:
+        description: 'role: "same_department"'
+        type: string
+      type:
+        type: string
+      user_id:
+        description: static
+        type: string
+    type: object
+  approval-engine-service_internal_domain.WorkflowDefinition:
+    properties:
+      app_id:
+        type: string
+      created_at:
+        type: string
+      doc_type:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      name:
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/approval-engine-service_internal_domain.WorkflowStep'
+        type: array
+      version:
+        type: integer
+    type: object
+  approval-engine-service_internal_domain.WorkflowStep:
+    properties:
+      approval_mode:
+        type: string
+      condition:
+        $ref: '#/definitions/approval-engine-service_internal_domain.Condition'
+      definition_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      on_empty:
+        type: string
+      resolver_rule:
+        $ref: '#/definitions/approval-engine-service_internal_domain.ResolverRule'
+      step_order:
+        type: integer
+    type: object
+  approval-engine-service_internal_repository.InboxItem:
+    properties:
+      assignment:
+        $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalAssignment'
+      request:
+        $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalRequest'
+      step_name:
+        type: string
+      total_steps:
+        description: |-
+          TotalSteps is the step count of the workflow version this request runs
+          on — enough for a UI to show "step 2 of 4" without an extra request
+          per row (fetching each request's full detail here would be N+1).
+        type: integer
+    type: object
+  approval-engine-service_pkg_response.Envelope:
+    properties:
+      data: {}
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  internal_handler.CreateApplicationBody:
+    properties:
+      code:
+        example: assetmgmt
+        type: string
+      name:
+        example: Asset Management
+        type: string
+    type: object
+  internal_handler.CreateRequestBody:
+    properties:
+      doc_type:
+        example: purchase_order
+        type: string
+      payload:
+        additionalProperties: {}
+        type: object
+      requester_id:
+        example: SA01
+        type: string
+      resource_id:
+        example: PO-2026-0912
+        type: string
+    type: object
+  internal_handler.DecisionBody:
+    properties:
+      comment:
+        type: string
+      decision:
+        enum:
+        - approved
+        - rejected
+        example: approved
+        type: string
+      user_id:
+        example: SS01
+        type: string
+    type: object
+  internal_handler.ImportBody:
+    properties:
+      participants:
+        items:
+          $ref: '#/definitions/approval-engine-service_internal_domain.Participant'
+        type: array
+    type: object
+  internal_handler.PublishWorkflowBody:
+    properties:
+      app_id:
+        example: assetmgmt
+        type: string
+      doc_type:
+        example: purchase_order
+        type: string
+      name:
+        example: PO Approval
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/internal_handler.StepInput'
+        type: array
+    type: object
+  internal_handler.StepInput:
+    properties:
+      approval_mode:
+        enum:
+        - any
+        - all
+        example: any
+        type: string
+      condition:
+        $ref: '#/definitions/approval-engine-service_internal_domain.Condition'
+      name:
+        example: Supervisor Approval
+        type: string
+      on_empty:
+        enum:
+        - fail
+        - skip
+        example: fail
+        type: string
+      resolver_rule:
+        $ref: '#/definitions/approval-engine-service_internal_domain.ResolverRule'
+    type: object
+info:
+  contact: {}
+  description: |-
+    Reusable approval workflow engine shared across Mayora internal systems (asset management first). A consuming app's requester_id/user_id are always checked against registered, active participants — the engine never trusts an identity blindly.
+    Auth: only POST /requests requires X-API-Key (a consuming application's server-to-server key — never expose it in a browser). Everything else is reached via the internal portal and relies on unguessable UUIDs plus the engine's own "are you the assigned approver" check.
+  title: Approval Engine API
+  version: "1.0"
+paths:
+  /applications:
+    get:
+      description: Never includes api_key — this is a read view for the management
+        UI, not a way to recover a lost key.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/approval-engine-service_internal_domain.Application'
+                  type: array
+              type: object
+      summary: List consuming applications
+      tags:
+      - applications
+    post:
+      consumes:
+      - application/json
+      description: Generates a new X-API-Key for the application. The key is only
+        ever returned in this one response — List never includes it, so it must be
+        copied to the consuming app's config immediately. No role gate yet (accepted
+        gap for the demo scope).
+      parameters:
+      - description: Application to register
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateApplicationBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: includes api_key, shown once
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_internal_domain.Application'
+              type: object
+        "400":
+          description: validation error or duplicate code
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Register a consuming application
+      tags:
+      - applications
+  /assignments/{id}/qr:
+    get:
+      description: PNG QR code encoding a signed verify link for this assignment,
+        meant to be printed on a paper document as a "signature" stamp. Not a certified/legally-binding
+        e-signature — a tamper-evident proof that an approval genuinely happened in
+        this engine.
+      parameters:
+      - description: Assignment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - image/png
+      responses:
+        "200":
+          description: image/png
+          schema:
+            type: file
+        "404":
+          description: assignment not found
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Approval stamp QR code
+      tags:
+      - signature
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Health check
+      tags:
+      - health
+  /inbox/{userID}:
+    get:
+      description: Everything pending this approver's decision, across every consuming
+        application — the "one inbox for every system" promise of a centralized approval
+        portal.
+      parameters:
+      - description: Approver NIK
+        in: path
+        name: userID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/approval-engine-service_internal_repository.InboxItem'
+                  type: array
+              type: object
+      summary: Approver inbox
+      tags:
+      - inbox
+  /participants:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/approval-engine-service_internal_domain.Participant'
+                  type: array
+              type: object
+      summary: List participants
+      tags:
+      - participants
+  /participants/import:
+    post:
+      consumes:
+      - application/json
+      description: Upserts by user_id (NIK) in one transaction — a partial failure
+        never leaves the table half-updated. Rows may reference a superior_id that
+        appears later in the same array (or not at all yet); foreign keys are deferred
+        to commit time, so the array does not need to be topologically sorted.
+      parameters:
+      - description: Participants to import
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.ImportBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Import participants (e.g. from a FICOM export)
+      tags:
+      - participants
+  /requests:
+    post:
+      consumes:
+      - application/json
+      description: 'Starts a new request against the calling application''s currently
+        active workflow for doc_type. Idempotent on (app, doc_type, resource_id):
+        calling it again with the same values returns the existing request instead
+        of erroring, so a Spring Boot caller can safely retry on timeout. requester_id
+        must be a registered, active participant.'
+      parameters:
+      - description: Request to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateRequestBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: already existed (idempotent replay)
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalRequest'
+              type: object
+        "201":
+          description: created
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalRequest'
+              type: object
+        "400":
+          description: validation error or unregistered requester
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+        "401":
+          description: missing or invalid X-API-Key
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      security:
+      - ApiKeyAuth: []
+      summary: Create an approval request
+      tags:
+      - requests
+  /requests/{id}:
+    get:
+      description: 'Full request with materialized steps and assignment snapshots.
+        Not gated behind an API key: both the consuming app and the approver portal
+        need to read this, and the id itself is an unguessable UUID.'
+      parameters:
+      - description: Request ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalRequest'
+              type: object
+        "404":
+          description: not found
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Get a request
+      tags:
+      - requests
+  /requests/{id}/decision:
+    post:
+      consumes:
+      - application/json
+      description: The engine enforces that user_id is the person assigned to the
+        currently active step (and still an active participant) — this handler does
+        not independently verify the caller's identity beyond that.
+      parameters:
+      - description: Request ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Decision
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.DecisionBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalRequest'
+              type: object
+        "400":
+          description: not the assigned approver, already decided, or invalid decision
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Approve or reject the active step
+      tags:
+      - requests
+  /verify/{id}:
+    get:
+      description: 'Public: confirms the HMAC code is genuine, then reports the assignment''s
+        real, live status (never trusts the code alone for the actual decision).'
+      parameters:
+      - description: Assignment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: HMAC signature from the QR code
+        in: query
+        name: sig
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+        "403":
+          description: invalid or tampered signature
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+        "404":
+          description: assignment not found
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Verify an approval stamp
+      tags:
+      - signature
+  /workflows:
+    get:
+      description: Every version of every workflow (optionally filtered by app_id),
+        for the management list view.
+      parameters:
+      - description: Filter by application ID
+        in: query
+        name: app_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/approval-engine-service_internal_domain.WorkflowDefinition'
+                  type: array
+              type: object
+      summary: List workflows
+      tags:
+      - workflows
+    post:
+      consumes:
+      - application/json
+      description: Always inserts a brand new version and atomically deactivates every
+        other version of (app_id, doc_type) — same call whether the pair is new or
+        already exists. In-flight requests keep running against the exact version
+        they started with. Each step's resolver_rule/condition is validated immediately
+        (unknown type, missing field, bad operator all fail here, not silently at
+        resolve time).
+      parameters:
+      - description: Workflow to publish
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.PublishWorkflowBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_internal_domain.WorkflowDefinition'
+              type: object
+        "400":
+          description: validation error
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Publish a workflow (create or edit)
+      tags:
+      - workflows
+  /workflows/{id}:
+    get:
+      parameters:
+      - description: Workflow definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_internal_domain.WorkflowDefinition'
+              type: object
+        "404":
+          description: not found
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Get a workflow version
+      tags:
+      - workflows
+  /workflows/{id}/deactivate:
+    post:
+      description: Stops the version from being used for new requests. Never a hard
+        delete — past requests still reference this definition_id and must stay readable.
+      parameters:
+      - description: Workflow definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Deactivate a workflow version
+      tags:
+      - workflows
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: X-API-Key
+    type: apiKey
+swagger: "2.0"
