@@ -33,7 +33,9 @@ type Config struct {
 func Load() *Config {
 	_ = godotenv.Load()
 
-	appPort := getEnv("APP_PORT", "8000")
+	// Vercel (and most PaaS runtimes) assign the listen port via PORT and
+	// expect the server to bind to it; APP_PORT remains the local-dev override.
+	appPort := getEnv("PORT", getEnv("APP_PORT", "8000"))
 
 	return &Config{
 		AppEnv:  getEnv("APP_ENV", "development"),
