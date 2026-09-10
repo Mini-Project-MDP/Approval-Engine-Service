@@ -31,14 +31,15 @@ func NewApplicationHandler(apps ApplicationStore) *ApplicationHandler {
 
 // CreateApplicationBody is the payload for POST /applications.
 type CreateApplicationBody struct {
-	Code string `json:"code" example:"assetmgmt"`
-	Name string `json:"name" example:"Asset Management"`
+	Code        string `json:"code" example:"assetmgmt"`
+	Name        string `json:"name" example:"Asset Management"`
+	CallbackURL string `json:"callback_url,omitempty" example:"https://assetmgmt.internal/api/approval-webhooks"`
 }
 
 // Create registers a new consuming application.
 //
 // @Summary Register a consuming application
-// @Description Generates a new X-API-Key for the application. The key is only ever returned in this one response — List never includes it, so it must be copied to the consuming app's config immediately. No role gate yet (accepted gap for the demo scope).
+// @Description Generates a new X-API-Key for the application. The key is only ever returned in this one response — List never includes it, so it must be copied to the consuming app's config immediately. callback_url is optional: if set, the engine POSTs a signed webhook there on every request/step state change (see WebhookEvent); if left empty the app can still always poll GET /requests/{id}. No role gate yet (accepted gap for the demo scope).
 // @Tags applications
 // @Accept json
 // @Produce json
@@ -61,7 +62,8 @@ func (h *ApplicationHandler) Create(c *fiber.Ctx) error {
 	}
 
 	app := &domain.Application{
-		ID: uuid.NewString(), Code: body.Code, Name: body.Name, APIKey: apiKey, IsActive: true,
+		ID: uuid.NewString(), Code: body.Code, Name: body.Name, APIKey: apiKey,
+		CallbackURL: body.CallbackURL, IsActive: true,
 	}
 	if err := h.apps.Create(c.Context(), app); err != nil {
 		return response.Error(c, fiber.StatusBadRequest, err.Error())

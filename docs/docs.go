@@ -25,6 +25,20 @@ const docTemplate = `{
                     "applications"
                 ],
                 "summary": "List consuming applications",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -37,10 +51,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/approval-engine-service_internal_domain.Application"
-                                            }
+                                            "$ref": "#/definitions/approval-engine-service_pkg_response.Page"
                                         }
                                     }
                                 }
@@ -50,7 +61,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Generates a new X-API-Key for the application. The key is only ever returned in this one response — List never includes it, so it must be copied to the consuming app's config immediately. No role gate yet (accepted gap for the demo scope).",
+                "description": "Generates a new X-API-Key for the application. The key is only ever returned in this one response — List never includes it, so it must be copied to the consuming app's config immediately. callback_url is optional: if set, the engine POSTs a signed webhook there on every request/step state change (see WebhookEvent); if left empty the app can still always poll GET /requests/{id}. No role gate yet (accepted gap for the demo scope).",
                 "consumes": [
                     "application/json"
                 ],
@@ -171,6 +182,18 @@ const docTemplate = `{
                         "name": "userID",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -185,10 +208,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/approval-engine-service_internal_repository.InboxItem"
-                                            }
+                                            "$ref": "#/definitions/approval-engine-service_pkg_response.Page"
                                         }
                                     }
                                 }
@@ -207,6 +227,20 @@ const docTemplate = `{
                     "participants"
                 ],
                 "summary": "List participants",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -219,10 +253,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/approval-engine-service_internal_domain.Participant"
-                                            }
+                                            "$ref": "#/definitions/approval-engine-service_pkg_response.Page"
                                         }
                                     }
                                 }
@@ -523,6 +554,18 @@ const docTemplate = `{
                         "description": "Filter by application ID",
                         "name": "app_id",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -537,10 +580,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/approval-engine-service_internal_domain.WorkflowDefinition"
-                                            }
+                                            "$ref": "#/definitions/approval-engine-service_pkg_response.Page"
                                         }
                                     }
                                 }
@@ -681,6 +721,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "api_key": {
+                    "type": "string"
+                },
+                "callback_url": {
                     "type": "string"
                 },
                 "code": {
@@ -947,24 +990,6 @@ const docTemplate = `{
                 }
             }
         },
-        "approval-engine-service_internal_repository.InboxItem": {
-            "type": "object",
-            "properties": {
-                "assignment": {
-                    "$ref": "#/definitions/approval-engine-service_internal_domain.ApprovalAssignment"
-                },
-                "request": {
-                    "$ref": "#/definitions/approval-engine-service_internal_domain.ApprovalRequest"
-                },
-                "step_name": {
-                    "type": "string"
-                },
-                "total_steps": {
-                    "description": "TotalSteps is the step count of the workflow version this request runs\non — enough for a UI to show \"step 2 of 4\" without an extra request\nper row (fetching each request's full detail here would be N+1).",
-                    "type": "integer"
-                }
-            }
-        },
         "approval-engine-service_pkg_response.Envelope": {
             "type": "object",
             "properties": {
@@ -980,9 +1005,39 @@ const docTemplate = `{
                 }
             }
         },
+        "approval-engine-service_pkg_response.Page": {
+            "type": "object",
+            "properties": {
+                "items": {},
+                "meta": {
+                    "$ref": "#/definitions/approval-engine-service_pkg_response.PageMeta"
+                }
+            }
+        },
+        "approval-engine-service_pkg_response.PageMeta": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_handler.CreateApplicationBody": {
             "type": "object",
             "properties": {
+                "callback_url": {
+                    "type": "string",
+                    "example": "https://assetmgmt.internal/api/approval-webhooks"
+                },
                 "code": {
                     "type": "string",
                     "example": "assetmgmt"

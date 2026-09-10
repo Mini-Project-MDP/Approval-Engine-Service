@@ -4,6 +4,8 @@ definitions:
     properties:
       api_key:
         type: string
+      callback_url:
+        type: string
       code:
         type: string
       created_at:
@@ -180,21 +182,6 @@ definitions:
       step_order:
         type: integer
     type: object
-  approval-engine-service_internal_repository.InboxItem:
-    properties:
-      assignment:
-        $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalAssignment'
-      request:
-        $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalRequest'
-      step_name:
-        type: string
-      total_steps:
-        description: |-
-          TotalSteps is the step count of the workflow version this request runs
-          on — enough for a UI to show "step 2 of 4" without an extra request
-          per row (fetching each request's full detail here would be N+1).
-        type: integer
-    type: object
   approval-engine-service_pkg_response.Envelope:
     properties:
       data: {}
@@ -205,8 +192,28 @@ definitions:
       success:
         type: boolean
     type: object
+  approval-engine-service_pkg_response.Page:
+    properties:
+      items: {}
+      meta:
+        $ref: '#/definitions/approval-engine-service_pkg_response.PageMeta'
+    type: object
+  approval-engine-service_pkg_response.PageMeta:
+    properties:
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
   internal_handler.CreateApplicationBody:
     properties:
+      callback_url:
+        example: https://assetmgmt.internal/api/approval-webhooks
+        type: string
       code:
         example: assetmgmt
         type: string
@@ -300,6 +307,15 @@ paths:
     get:
       description: Never includes api_key — this is a read view for the management
         UI, not a way to recover a lost key.
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
@@ -310,9 +326,7 @@ paths:
             - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
             - properties:
                 data:
-                  items:
-                    $ref: '#/definitions/approval-engine-service_internal_domain.Application'
-                  type: array
+                  $ref: '#/definitions/approval-engine-service_pkg_response.Page'
               type: object
       summary: List consuming applications
       tags:
@@ -320,10 +334,12 @@ paths:
     post:
       consumes:
       - application/json
-      description: Generates a new X-API-Key for the application. The key is only
+      description: 'Generates a new X-API-Key for the application. The key is only
         ever returned in this one response — List never includes it, so it must be
-        copied to the consuming app's config immediately. No role gate yet (accepted
-        gap for the demo scope).
+        copied to the consuming app''s config immediately. callback_url is optional:
+        if set, the engine POSTs a signed webhook there on every request/step state
+        change (see WebhookEvent); if left empty the app can still always poll GET
+        /requests/{id}. No role gate yet (accepted gap for the demo scope).'
       parameters:
       - description: Application to register
         in: body
@@ -399,6 +415,14 @@ paths:
         name: userID
         required: true
         type: string
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
@@ -409,15 +433,22 @@ paths:
             - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
             - properties:
                 data:
-                  items:
-                    $ref: '#/definitions/approval-engine-service_internal_repository.InboxItem'
-                  type: array
+                  $ref: '#/definitions/approval-engine-service_pkg_response.Page'
               type: object
       summary: Approver inbox
       tags:
       - inbox
   /participants:
     get:
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
@@ -428,9 +459,7 @@ paths:
             - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
             - properties:
                 data:
-                  items:
-                    $ref: '#/definitions/approval-engine-service_internal_domain.Participant'
-                  type: array
+                  $ref: '#/definitions/approval-engine-service_pkg_response.Page'
               type: object
       summary: List participants
       tags:
@@ -624,6 +653,14 @@ paths:
         in: query
         name: app_id
         type: string
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
@@ -634,9 +671,7 @@ paths:
             - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
             - properties:
                 data:
-                  items:
-                    $ref: '#/definitions/approval-engine-service_internal_domain.WorkflowDefinition'
-                  type: array
+                  $ref: '#/definitions/approval-engine-service_pkg_response.Page'
               type: object
       summary: List workflows
       tags:

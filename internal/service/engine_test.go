@@ -2,7 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +21,7 @@ func newTestEngine() (*Engine, *fakeWorkflowRepo, *fakeRequestRepo, *fakeEventRe
 	events := &fakeEventRepo{}
 	participants := newFakeParticipants()
 	resolver := NewResolver(participants)
-	return NewEngine(workflows, requests, events, resolver, participants), workflows, requests, events
+	return NewEngine(workflows, requests, events, resolver, participants, nil), workflows, requests, events
 }
 
 func step(order int, name string, rule domain.ResolverRule) domain.WorkflowStep {
@@ -264,4 +269,62 @@ func TestOnlyAssignedApproverCanDecide(t *testing.T) {
 
 	_, err = engine.RecordDecision(context.Background(), req.ID, "RSM1", domain.StatusApproved, nil)
 	assert.Error(t, err, "RSM1 is not the assigned approver on step 1")
+}
+
+// TestWebhooksFireThroughTheFullDecisionFlow wires a *real* WebhookNotifier
+// (not nil, like every other test above) into the engine and drives an
+// actual create + approve flow, to prove the appID plumbing threaded through
+// advance/activateStep/completeRequest/logEvent actually reaches the
+// notifier with the right app for every transition — not just that
+// WebhookNotifier works in isolation (see webhook_test.go for that).
+func TestWebhooksFireThroughTheFullDecisionFlow(t *testing.T) {
+	var mu sync.Mutex
+	var gotEvents []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var evt WebhookEvent
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&evt))
+		mu.Lock()
+		gotEvents = append(gotEvents, evt.Event)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	workflows := newFakeWorkflowRepo()
+	requests := newFakeRequestRepo()
+	events := &fakeEventRepo{}
+	participants := newFakeParticipants()
+	resolver := NewResolver(participants)
+	lookup := &fakeAppLookup{app: &domain.Application{ID: "assetmgmt", APIKey: "secret", CallbackURL: srv.URL}}
+	notifier := NewWebhookNotifier(lookup)
+	engine := NewEngine(workflows, requests, events, resolver, participants, notifier)
+
+	workflows.register("assetmgmt", "purchase_order", domain.WorkflowDefinition{
+		ID: "def-1", AppID: "assetmgmt", DocType: "purchase_order", Version: 1, IsActive: true,
+		Steps: []domain.WorkflowStep{step(1, "supervisor", domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1})},
+	})
+
+	req, err := engine.CreateRequest(context.Background(), "assetmgmt", "purchase_order", "PO-1", "SA01", nil)
+	require.NoError(t, err)
+	_, err = engine.RecordDecision(context.Background(), req.ID, "SS01", domain.StatusApproved, nil)
+	require.NoError(t, err)
+
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(gotEvents) == 4
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Order is deliberately not asserted here — see the "NOT guaranteed to
+	// arrive in order" note on WebhookEvent. What matters is that every
+	// transition the audit log records also reaches callback_url at all.
+	assert.ElementsMatch(t, []string{
+		domain.EventRequestCreated,
+		domain.EventStepActivated,
+		domain.EventApproved,
+		domain.EventRequestCompleted,
+	}, gotEvents)
 }

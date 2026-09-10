@@ -42,6 +42,23 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("apply schema (%.60s...): %w", stmt, err)
 		}
 	}
+	// Columns added after a table already existed in production can't go
+	// through CREATE TABLE IF NOT EXISTS above, so they're patched in here.
+	if err := addColumnIfMissing(db, "applications", "callback_url", "TEXT"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addColumnIfMissing runs an idempotent ALTER TABLE ADD COLUMN: harmless if
+// the column is already there (fresh databases get it straight from
+// schema.sql above), needed if it isn't (databases created before the
+// column existed).
+func addColumnIfMissing(db *sql.DB, table, column, ddlType string) error {
+	_, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddlType))
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
 	return nil
 }
 

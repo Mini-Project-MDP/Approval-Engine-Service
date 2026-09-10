@@ -43,7 +43,7 @@ func main() {
 	requests := repository.NewRequestRepository(db)
 	events := repository.NewEventRepository(db)
 	resolver := service.NewResolver(participants)
-	engine := service.NewEngine(workflows, requests, events, resolver, participants)
+	engine := service.NewEngine(workflows, requests, events, resolver, participants, nil)
 
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO applications (id, code, name, api_key) VALUES (?, ?, ?, ?)`,

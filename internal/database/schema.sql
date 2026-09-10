@@ -2,13 +2,16 @@
 -- Applied on startup; safe to re-run.
 
 -- Consuming applications (Spring Boot apps, asset management, etc).
+-- callback_url, if set, is where the engine POSTs a WebhookEvent whenever a
+-- request/step belonging to this app changes state (see service.WebhookNotifier).
 CREATE TABLE IF NOT EXISTS applications (
-    id         TEXT PRIMARY KEY,
-    code       TEXT NOT NULL UNIQUE,
-    name       TEXT NOT NULL,
-    api_key    TEXT NOT NULL UNIQUE,
-    is_active  INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    id           TEXT PRIMARY KEY,
+    code         TEXT NOT NULL UNIQUE,
+    name         TEXT NOT NULL,
+    api_key      TEXT NOT NULL UNIQUE,
+    callback_url TEXT,
+    is_active    INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- People who can request or approve. Flat table: superior_id is the only

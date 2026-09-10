@@ -72,7 +72,8 @@ func main() {
 	applications := repository.NewApplicationRepository(db)
 
 	resolver := service.NewResolver(participants)
-	engine := service.NewEngine(workflows, requests, events, resolver, participants)
+	notifier := service.NewWebhookNotifier(applications)
+	engine := service.NewEngine(workflows, requests, events, resolver, participants, notifier)
 	signer := service.NewSignatureService(cfg.VerificationSecret)
 
 	deps := router.Dependencies{

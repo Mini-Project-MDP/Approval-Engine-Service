@@ -54,10 +54,13 @@ type Engine struct {
 	events       EventRepository
 	resolver     *Resolver
 	participants ParticipantStore
+	notifier     *WebhookNotifier
 }
 
-func NewEngine(workflows WorkflowRepository, requests RequestRepository, events EventRepository, resolver *Resolver, participants ParticipantStore) *Engine {
-	return &Engine{workflows: workflows, requests: requests, events: events, resolver: resolver, participants: participants}
+// notifier may be nil (tests, or a caller that doesn't need webhooks) —
+// logEvent skips delivery entirely in that case.
+func NewEngine(workflows WorkflowRepository, requests RequestRepository, events EventRepository, resolver *Resolver, participants ParticipantStore, notifier *WebhookNotifier) *Engine {
+	return &Engine{workflows: workflows, requests: requests, events: events, resolver: resolver, participants: participants, notifier: notifier}
 }
 
 // CreateRequest starts a new approval flow against the app's currently
@@ -102,7 +105,7 @@ func (e *Engine) CreateRequest(ctx context.Context, appID, docType, resourceID, 
 	if err := e.requests.CreateRequest(ctx, req); err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	if err := e.logEvent(ctx, req.ID, nil, nil, domain.EventRequestCreated, map[string]any{
+	if err := e.logEvent(ctx, appID, req.ID, nil, nil, domain.EventRequestCreated, map[string]any{
 		"doc_type": docType, "resource_id": resourceID,
 	}); err != nil {
 		return nil, err
@@ -170,7 +173,7 @@ func (e *Engine) RecordDecision(ctx context.Context, requestID, userID, decision
 		eventType = domain.EventRejected
 	}
 	actorID := userID
-	if err := e.logEvent(ctx, requestID, &activeStep.ID, &actorID, eventType, map[string]any{"step": activeStep.Name}); err != nil {
+	if err := e.logEvent(ctx, req.AppID, requestID, &activeStep.ID, &actorID, eventType, map[string]any{"step": activeStep.Name}); err != nil {
 		return nil, err
 	}
 
@@ -181,7 +184,7 @@ func (e *Engine) RecordDecision(ctx context.Context, requestID, userID, decision
 		if err := e.requests.SkipPendingAssignments(ctx, activeStep.ID); err != nil {
 			return nil, fmt.Errorf("skip remaining approvers: %w", err)
 		}
-		if err := e.completeRequest(ctx, req.ID, domain.StatusRejected); err != nil {
+		if err := e.completeRequest(ctx, req.AppID, req.ID, domain.StatusRejected); err != nil {
 			return nil, err
 		}
 		return e.requests.GetByID(ctx, requestID)
@@ -233,7 +236,7 @@ func (e *Engine) advance(ctx context.Context, req *domain.ApprovalRequest, def *
 			return fmt.Errorf("step %d condition: %w", step.StepOrder, err)
 		}
 		if !runs {
-			if err := e.materializeSkippedStep(ctx, req.ID, step); err != nil {
+			if err := e.materializeSkippedStep(ctx, req.AppID, req.ID, step); err != nil {
 				return err
 			}
 			req.CurrentStepOrder = step.StepOrder
@@ -247,22 +250,22 @@ func (e *Engine) advance(ctx context.Context, req *domain.ApprovalRequest, def *
 
 		if len(approvers) == 0 {
 			if step.OnEmpty == domain.OnEmptySkip {
-				if err := e.materializeSkippedStep(ctx, req.ID, step); err != nil {
+				if err := e.materializeSkippedStep(ctx, req.AppID, req.ID, step); err != nil {
 					return err
 				}
 				req.CurrentStepOrder = step.StepOrder
 				continue
 			}
-			return e.parkOnResolutionFailure(ctx, req.ID, step)
+			return e.parkOnResolutionFailure(ctx, req.AppID, req.ID, step)
 		}
 
-		return e.activateStep(ctx, req.ID, step, approvers)
+		return e.activateStep(ctx, req.AppID, req.ID, step, approvers)
 	}
 
-	return e.completeRequest(ctx, req.ID, domain.StatusApproved)
+	return e.completeRequest(ctx, req.AppID, req.ID, domain.StatusApproved)
 }
 
-func (e *Engine) activateStep(ctx context.Context, requestID string, step domain.WorkflowStep, approvers []domain.Participant) error {
+func (e *Engine) activateStep(ctx context.Context, appID, requestID string, step domain.WorkflowStep, approvers []domain.Participant) error {
 	now := nowString()
 	s := &domain.ApprovalStep{
 		ID:           uuid.NewString(),
@@ -297,12 +300,12 @@ func (e *Engine) activateStep(ctx context.Context, requestID string, step domain
 	if err := e.requests.UpdateCurrentStep(ctx, requestID, step.StepOrder); err != nil {
 		return fmt.Errorf("advance current step: %w", err)
 	}
-	return e.logEvent(ctx, requestID, &s.ID, nil, domain.EventStepActivated, map[string]any{
+	return e.logEvent(ctx, appID, requestID, &s.ID, nil, domain.EventStepActivated, map[string]any{
 		"step": step.Name, "approvers": approverIDs, "mode": step.ApprovalMode,
 	})
 }
 
-func (e *Engine) materializeSkippedStep(ctx context.Context, requestID string, step domain.WorkflowStep) error {
+func (e *Engine) materializeSkippedStep(ctx context.Context, appID, requestID string, step domain.WorkflowStep) error {
 	now := nowString()
 	s := &domain.ApprovalStep{
 		ID:           uuid.NewString(),
@@ -320,7 +323,7 @@ func (e *Engine) materializeSkippedStep(ctx context.Context, requestID string, s
 	if err := e.requests.UpdateCurrentStep(ctx, requestID, step.StepOrder); err != nil {
 		return fmt.Errorf("advance current step: %w", err)
 	}
-	return e.logEvent(ctx, requestID, &s.ID, nil, domain.EventStepSkipped, map[string]any{"step": step.Name})
+	return e.logEvent(ctx, appID, requestID, &s.ID, nil, domain.EventStepSkipped, map[string]any{"step": step.Name})
 }
 
 // parkOnResolutionFailure leaves the request pending but with no active
@@ -328,7 +331,7 @@ func (e *Engine) materializeSkippedStep(ctx context.Context, requestID string, s
 // role) and on_empty=fail. Nothing here auto-retries; a human resolves the
 // data gap and the step is re-run. Deliberately not built further than this
 // for now (no scheduler, no notifications) to keep v1 shippable.
-func (e *Engine) parkOnResolutionFailure(ctx context.Context, requestID string, step domain.WorkflowStep) error {
+func (e *Engine) parkOnResolutionFailure(ctx context.Context, appID, requestID string, step domain.WorkflowStep) error {
 	s := &domain.ApprovalStep{
 		ID:           uuid.NewString(),
 		RequestID:    requestID,
@@ -340,17 +343,17 @@ func (e *Engine) parkOnResolutionFailure(ctx context.Context, requestID string, 
 	if err := e.requests.CreateStep(ctx, s); err != nil {
 		return fmt.Errorf("create failed step: %w", err)
 	}
-	return e.logEvent(ctx, requestID, &s.ID, nil, domain.EventResolutionFailed, map[string]any{
+	return e.logEvent(ctx, appID, requestID, &s.ID, nil, domain.EventResolutionFailed, map[string]any{
 		"step": step.Name, "rule": step.ResolverRule,
 	})
 }
 
-func (e *Engine) completeRequest(ctx context.Context, requestID, status string) error {
+func (e *Engine) completeRequest(ctx context.Context, appID, requestID, status string) error {
 	now := nowString()
 	if err := e.requests.UpdateRequestStatus(ctx, requestID, status, &now); err != nil {
 		return fmt.Errorf("complete request: %w", err)
 	}
-	return e.logEvent(ctx, requestID, nil, nil, domain.EventRequestCompleted, map[string]any{"outcome": status})
+	return e.logEvent(ctx, appID, requestID, nil, nil, domain.EventRequestCompleted, map[string]any{"outcome": status})
 }
 
 func (e *Engine) stepSatisfied(ctx context.Context, step *domain.ApprovalStep) (bool, error) {
@@ -376,7 +379,13 @@ func (e *Engine) stepSatisfied(ctx context.Context, step *domain.ApprovalStep) (
 	return false, nil
 }
 
-func (e *Engine) logEvent(ctx context.Context, requestID string, stepID, actorID *string, eventType string, detail map[string]any) error {
+// logEvent writes the append-only audit record for a transition and, in the
+// same breath, hands the equivalent WebhookEvent to the notifier — every
+// state change a consuming app can see via GET /requests/{id} also reaches
+// it (best-effort) as a push. notifier is nil-safe (Notify no-ops), so
+// callers that don't need webhooks (tests, smoketest) can pass nil.
+func (e *Engine) logEvent(ctx context.Context, appID, requestID string, stepID, actorID *string, eventType string, detail map[string]any) error {
+	occurredAt := nowString()
 	if err := e.events.Append(ctx, &domain.ApprovalEvent{
 		ID:        uuid.NewString(),
 		RequestID: requestID,
@@ -387,6 +396,15 @@ func (e *Engine) logEvent(ctx context.Context, requestID string, stepID, actorID
 	}); err != nil {
 		return fmt.Errorf("append audit event %s: %w", eventType, err)
 	}
+	e.notifier.Notify(appID, WebhookEvent{
+		Event:      eventType,
+		AppID:      appID,
+		RequestID:  requestID,
+		StepID:     stepID,
+		ActorID:    actorID,
+		Detail:     detail,
+		OccurredAt: occurredAt,
+	})
 	return nil
 }
 

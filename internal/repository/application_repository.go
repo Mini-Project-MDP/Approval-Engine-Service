@@ -37,8 +37,8 @@ func (r *ApplicationRepository) GetByAPIKey(ctx context.Context, apiKey string) 
 // for generating a unique id and a random api key before calling this.
 func (r *ApplicationRepository) Create(ctx context.Context, app *domain.Application) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO applications (id, code, name, api_key, is_active) VALUES (?, ?, ?, ?, ?)`,
-		app.ID, app.Code, app.Name, app.APIKey, boolToInt(app.IsActive))
+		INSERT INTO applications (id, code, name, api_key, callback_url, is_active) VALUES (?, ?, ?, ?, ?, ?)`,
+		app.ID, app.Code, app.Name, app.APIKey, nullableString(app.CallbackURL), boolToInt(app.IsActive))
 	if err != nil {
 		return fmt.Errorf("insert application: %w", err)
 	}
@@ -52,7 +52,7 @@ func (r *ApplicationRepository) List(ctx context.Context, page, limit int) ([]do
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, code, name, api_key, is_active, created_at FROM applications ORDER BY name LIMIT ? OFFSET ?`,
+		SELECT id, code, name, api_key, callback_url, is_active, created_at FROM applications ORDER BY name LIMIT ? OFFSET ?`,
 		limit, (page-1)*limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list applications: %w", err)
@@ -63,11 +63,35 @@ func (r *ApplicationRepository) List(ctx context.Context, page, limit int) ([]do
 	for rows.Next() {
 		var a domain.Application
 		var isActive int64
-		if err := rows.Scan(&a.ID, &a.Code, &a.Name, &a.APIKey, &isActive, &a.CreatedAt); err != nil {
+		var callbackURL sql.NullString
+		if err := rows.Scan(&a.ID, &a.Code, &a.Name, &a.APIKey, &callbackURL, &isActive, &a.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan application: %w", err)
 		}
+		a.CallbackURL = callbackURL.String
 		a.IsActive = isActive != 0
 		out = append(out, a)
 	}
 	return out, total, rows.Err()
+}
+
+// GetByID returns one application with its callback_url and api_key
+// (unlike List, which strips api_key for the management UI) — used by the
+// webhook notifier to know where and how to sign a delivery for a given
+// app id. Returns (nil, nil) if no application has that id.
+func (r *ApplicationRepository) GetByID(ctx context.Context, id string) (*domain.Application, error) {
+	var a domain.Application
+	var isActive int64
+	var callbackURL sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, code, name, api_key, callback_url, is_active, created_at FROM applications WHERE id = ?`, id).
+		Scan(&a.ID, &a.Code, &a.Name, &a.APIKey, &callbackURL, &isActive, &a.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get application %s: %w", id, err)
+	}
+	a.CallbackURL = callbackURL.String
+	a.IsActive = isActive != 0
+	return &a, nil
 }
