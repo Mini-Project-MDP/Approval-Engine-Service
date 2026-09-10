@@ -10,7 +10,7 @@ import (
 )
 
 type InboxReader interface {
-	ListInbox(ctx context.Context, userID string) ([]repository.InboxItem, error)
+	ListInbox(ctx context.Context, userID string, page, limit int) ([]repository.InboxItem, int, error)
 }
 
 type InboxHandler struct {
@@ -28,12 +28,15 @@ func NewInboxHandler(requests InboxReader) *InboxHandler {
 // @Tags inbox
 // @Produce json
 // @Param userID path string true "Approver NIK"
-// @Success 200 {object} response.Envelope{data=[]repository.InboxItem}
+// @Param page query int false "Page number (default 1)"
+// @Param limit query int false "Items per page (default 20, max 100)"
+// @Success 200 {object} response.Envelope{data=response.Page}
 // @Router /inbox/{userID} [get]
 func (h *InboxHandler) List(c *fiber.Ctx) error {
-	items, err := h.requests.ListInbox(c.Context(), c.Params("userID"))
+	page, limit := parsePagination(c)
+	items, total, err := h.requests.ListInbox(c.Context(), c.Params("userID"), page, limit)
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
-	return response.Success(c, fiber.StatusOK, "", items)
+	return response.Paginated(c, items, page, limit, total)
 }

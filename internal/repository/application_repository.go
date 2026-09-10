@@ -45,11 +45,17 @@ func (r *ApplicationRepository) Create(ctx context.Context, app *domain.Applicat
 	return nil
 }
 
-func (r *ApplicationRepository) List(ctx context.Context) ([]domain.Application, error) {
+func (r *ApplicationRepository) List(ctx context.Context, page, limit int) ([]domain.Application, int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM applications`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count applications: %w", err)
+	}
+
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, code, name, api_key, is_active, created_at FROM applications ORDER BY name`)
+		SELECT id, code, name, api_key, is_active, created_at FROM applications ORDER BY name LIMIT ? OFFSET ?`,
+		limit, (page-1)*limit)
 	if err != nil {
-		return nil, fmt.Errorf("list applications: %w", err)
+		return nil, 0, fmt.Errorf("list applications: %w", err)
 	}
 	defer rows.Close()
 
@@ -58,10 +64,10 @@ func (r *ApplicationRepository) List(ctx context.Context) ([]domain.Application,
 		var a domain.Application
 		var isActive int64
 		if err := rows.Scan(&a.ID, &a.Code, &a.Name, &a.APIKey, &isActive, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan application: %w", err)
+			return nil, 0, fmt.Errorf("scan application: %w", err)
 		}
 		a.IsActive = isActive != 0
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }

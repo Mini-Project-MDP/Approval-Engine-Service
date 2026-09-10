@@ -64,18 +64,27 @@ func (r *WorkflowRepository) GetDefinitionByID(ctx context.Context, id string) (
 	return def, nil
 }
 
-func (r *WorkflowRepository) ListDefinitions(ctx context.Context, appID string) ([]domain.WorkflowDefinition, error) {
-	query := `SELECT id, app_id, doc_type, name, version, is_active, created_at FROM workflow_definitions`
-	var args []any
+func (r *WorkflowRepository) ListDefinitions(ctx context.Context, appID string, page, limit int) ([]domain.WorkflowDefinition, int, error) {
+	where := ""
+	var whereArgs []any
 	if appID != "" {
-		query += " WHERE app_id = ?"
-		args = append(args, appID)
+		where = " WHERE app_id = ?"
+		whereArgs = append(whereArgs, appID)
 	}
-	query += " ORDER BY doc_type, version DESC"
+
+	var total int
+	countQuery := "SELECT COUNT(*) FROM workflow_definitions" + where
+	if err := r.db.QueryRowContext(ctx, countQuery, whereArgs...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count definitions: %w", err)
+	}
+
+	query := "SELECT id, app_id, doc_type, name, version, is_active, created_at FROM workflow_definitions" + where +
+		" ORDER BY doc_type, version DESC LIMIT ? OFFSET ?"
+	args := append(whereArgs, limit, (page-1)*limit)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list definitions: %w", err)
+		return nil, 0, fmt.Errorf("list definitions: %w", err)
 	}
 	defer rows.Close()
 
@@ -83,11 +92,11 @@ func (r *WorkflowRepository) ListDefinitions(ctx context.Context, appID string) 
 	for rows.Next() {
 		def, err := scanDefinition(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, *def)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 // CreateDefinition inserts a new blueprint together with its steps in one

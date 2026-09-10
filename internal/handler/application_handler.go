@@ -14,7 +14,7 @@ import (
 
 type ApplicationStore interface {
 	Create(ctx context.Context, app *domain.Application) error
-	List(ctx context.Context) ([]domain.Application, error)
+	List(ctx context.Context, page, limit int) ([]domain.Application, int, error)
 }
 
 // ApplicationHandler manages consuming applications (e.g. asset
@@ -75,17 +75,20 @@ func (h *ApplicationHandler) Create(c *fiber.Ctx) error {
 // @Description Never includes api_key — this is a read view for the management UI, not a way to recover a lost key.
 // @Tags applications
 // @Produce json
-// @Success 200 {object} response.Envelope{data=[]domain.Application}
+// @Param page query int false "Page number (default 1)"
+// @Param limit query int false "Items per page (default 20, max 100)"
+// @Success 200 {object} response.Envelope{data=response.Page}
 // @Router /applications [get]
 func (h *ApplicationHandler) List(c *fiber.Ctx) error {
-	apps, err := h.apps.List(c.Context())
+	page, limit := parsePagination(c)
+	apps, total, err := h.apps.List(c.Context(), page, limit)
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
 	for i := range apps {
 		apps[i].APIKey = ""
 	}
-	return response.Success(c, fiber.StatusOK, "", apps)
+	return response.Paginated(c, apps, page, limit, total)
 }
 
 func generateAPIKey() (string, error) {

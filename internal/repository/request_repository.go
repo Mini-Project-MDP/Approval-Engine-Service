@@ -91,7 +91,14 @@ type InboxItem struct {
 	TotalSteps int `json:"total_steps"`
 }
 
-func (r *RequestRepository) ListInbox(ctx context.Context, userID string) ([]InboxItem, error) {
+func (r *RequestRepository) ListInbox(ctx context.Context, userID string, page, limit int) ([]InboxItem, int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM approval_assignments a WHERE a.user_id = ? AND a.status = 'pending'`, userID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count inbox: %w", err)
+	}
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT a.id, a.step_id, a.request_id, a.user_id, a.user_name, a.user_position, a.status, a.comment, a.acted_at, a.created_at,
 		       s.name,
@@ -101,9 +108,10 @@ func (r *RequestRepository) ListInbox(ctx context.Context, userID string) ([]Inb
 		JOIN approval_steps s ON s.id = a.step_id
 		JOIN approval_requests req ON req.id = a.request_id
 		WHERE a.user_id = ? AND a.status = 'pending'
-		ORDER BY a.created_at DESC`, userID)
+		ORDER BY a.created_at DESC
+		LIMIT ? OFFSET ?`, userID, limit, (page-1)*limit)
 	if err != nil {
-		return nil, fmt.Errorf("list inbox: %w", err)
+		return nil, 0, fmt.Errorf("list inbox: %w", err)
 	}
 	defer rows.Close()
 
@@ -123,7 +131,7 @@ func (r *RequestRepository) ListInbox(ctx context.Context, userID string) ([]Inb
 			&item.Request.CreatedAt, &completedAt, &item.TotalSteps,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("scan inbox row: %w", err)
+			return nil, 0, fmt.Errorf("scan inbox row: %w", err)
 		}
 		if comment.Valid {
 			item.Assignment.Comment = &comment.String
@@ -135,11 +143,11 @@ func (r *RequestRepository) ListInbox(ctx context.Context, userID string) ([]Inb
 			item.Request.CompletedAt = &completedAt.String
 		}
 		if err := json.Unmarshal([]byte(payloadJSON), &item.Request.Payload); err != nil {
-			return nil, fmt.Errorf("unmarshal payload: %w", err)
+			return nil, 0, fmt.Errorf("unmarshal payload: %w", err)
 		}
 		out = append(out, item)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 func (r *RequestRepository) UpdateRequestStatus(ctx context.Context, id, status string, completedAt *string) error {

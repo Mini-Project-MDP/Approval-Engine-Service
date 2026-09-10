@@ -29,3 +29,34 @@ func Error(c *fiber.Ctx, status int, message string) error {
 		Error:   message,
 	})
 }
+
+// PageMeta describes one page of a larger result set.
+type PageMeta struct {
+	Page       int `json:"page"`
+	Limit      int `json:"limit"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
+}
+
+// Page is the data payload for a paginated list endpoint.
+type Page struct {
+	Items any      `json:"items"`
+	Meta  PageMeta `json:"meta"`
+}
+
+// Paginated writes a 200 JSON response wrapping items with pagination meta.
+func Paginated(c *fiber.Ctx, items any, page, limit, total int) error {
+	totalPages := (total + limit - 1) / limit
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	return Success(c, fiber.StatusOK, "", Page{
+		Items: items,
+		Meta: PageMeta{
+			Page:       page,
+			Limit:      limit,
+			Total:      total,
+			TotalPages: totalPages,
+		},
+	})
+}

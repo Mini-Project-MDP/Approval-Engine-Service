@@ -12,7 +12,7 @@ import (
 
 type ParticipantStore interface {
 	UpsertBatch(ctx context.Context, participants []domain.Participant) error
-	List(ctx context.Context) ([]domain.Participant, error)
+	List(ctx context.Context, page, limit int) ([]domain.Participant, int, error)
 }
 
 // ParticipantHandler is the import surface for organizational data (from
@@ -74,12 +74,15 @@ func (h *ParticipantHandler) Import(c *fiber.Ctx) error {
 // @Summary List participants
 // @Tags participants
 // @Produce json
-// @Success 200 {object} response.Envelope{data=[]domain.Participant}
+// @Param page query int false "Page number (default 1)"
+// @Param limit query int false "Items per page (default 20, max 100)"
+// @Success 200 {object} response.Envelope{data=response.Page}
 // @Router /participants [get]
 func (h *ParticipantHandler) List(c *fiber.Ctx) error {
-	participants, err := h.participants.List(c.Context())
+	page, limit := parsePagination(c)
+	participants, total, err := h.participants.List(c.Context(), page, limit)
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
-	return response.Success(c, fiber.StatusOK, "", participants)
+	return response.Paginated(c, participants, page, limit, total)
 }

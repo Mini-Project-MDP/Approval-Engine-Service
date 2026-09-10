@@ -14,7 +14,7 @@ import (
 
 type WorkflowStore interface {
 	Publish(ctx context.Context, def *domain.WorkflowDefinition) error
-	ListDefinitions(ctx context.Context, appID string) ([]domain.WorkflowDefinition, error)
+	ListDefinitions(ctx context.Context, appID string, page, limit int) ([]domain.WorkflowDefinition, int, error)
 	GetDefinitionByID(ctx context.Context, id string) (*domain.WorkflowDefinition, error)
 	Deactivate(ctx context.Context, id string) error
 }
@@ -109,14 +109,17 @@ func (h *WorkflowHandler) Create(c *fiber.Ctx) error {
 // @Tags workflows
 // @Produce json
 // @Param app_id query string false "Filter by application ID"
-// @Success 200 {object} response.Envelope{data=[]domain.WorkflowDefinition}
+// @Param page query int false "Page number (default 1)"
+// @Param limit query int false "Items per page (default 20, max 100)"
+// @Success 200 {object} response.Envelope{data=response.Page}
 // @Router /workflows [get]
 func (h *WorkflowHandler) List(c *fiber.Ctx) error {
-	defs, err := h.workflows.ListDefinitions(c.Context(), c.Query("app_id"))
+	page, limit := parsePagination(c)
+	defs, total, err := h.workflows.ListDefinitions(c.Context(), c.Query("app_id"), page, limit)
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
-	return response.Success(c, fiber.StatusOK, "", defs)
+	return response.Paginated(c, defs, page, limit, total)
 }
 
 // Get returns one workflow version with its steps.

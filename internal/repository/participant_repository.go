@@ -123,12 +123,17 @@ func (r *ParticipantRepository) UpsertBatch(ctx context.Context, participants []
 	return tx.Commit()
 }
 
-func (r *ParticipantRepository) List(ctx context.Context) ([]domain.Participant, error) {
+func (r *ParticipantRepository) List(ctx context.Context, page, limit int) ([]domain.Participant, int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM participants`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count participants: %w", err)
+	}
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT user_id, name, email, position, department, superior_id, is_active, updated_at
-		FROM participants ORDER BY name`)
+		FROM participants ORDER BY name LIMIT ? OFFSET ?`, limit, (page-1)*limit)
 	if err != nil {
-		return nil, fmt.Errorf("list participants: %w", err)
+		return nil, 0, fmt.Errorf("list participants: %w", err)
 	}
 	defer rows.Close()
 
@@ -136,11 +141,11 @@ func (r *ParticipantRepository) List(ctx context.Context) ([]domain.Participant,
 	for rows.Next() {
 		p, err := scanParticipant(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, *p)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 type rowScanner interface {
