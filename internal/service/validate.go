@@ -43,16 +43,42 @@ func ValidateStep(s domain.WorkflowStep) error {
 		return fmt.Errorf("step %q: on_empty must be %q or %q", s.Name, domain.OnEmptyFail, domain.OnEmptySkip)
 	}
 
+	if s.Condition != nil && len(s.Conditions) > 0 {
+		return fmt.Errorf("step %q: set either condition or conditions, not both", s.Name)
+	}
+
 	if s.Condition != nil {
-		if s.Condition.Field == "" {
-			return fmt.Errorf("step %q: condition needs a field", s.Name)
+		if err := validateCondition(*s.Condition); err != nil {
+			return fmt.Errorf("step %q: %w", s.Name, err)
 		}
-		switch s.Condition.Op {
-		case "eq", "ne", "gt", "gte", "lt", "lte", "in":
+	}
+
+	if len(s.Conditions) > 0 {
+		switch s.Logic {
+		case "", domain.LogicAll, domain.LogicAny:
 		default:
-			return fmt.Errorf("step %q: unknown condition operator %q", s.Name, s.Condition.Op)
+			return fmt.Errorf("step %q: logic must be %q or %q", s.Name, domain.LogicAll, domain.LogicAny)
+		}
+		for _, c := range s.Conditions {
+			if err := validateCondition(c); err != nil {
+				return fmt.Errorf("step %q: %w", s.Name, err)
+			}
 		}
 	}
 
 	return nil
+}
+
+// validateCondition checks one Condition regardless of whether it came from
+// the legacy singular Condition field or an entry in Conditions.
+func validateCondition(c domain.Condition) error {
+	if c.Field == "" {
+		return fmt.Errorf("condition needs a field")
+	}
+	switch c.Op {
+	case "eq", "ne", "gt", "gte", "lt", "lte", "in":
+		return nil
+	default:
+		return fmt.Errorf("unknown condition operator %q", c.Op)
+	}
 }

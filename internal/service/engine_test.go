@@ -148,6 +148,107 @@ func TestConditionSkipsStepWhenUnmet(t *testing.T) {
 	assert.Equal(t, "SS01", req.Steps[1].Assignments[0].UserID)
 }
 
+// TestCompoundConditionSkipsStepUnlessEveryConditionIsMet proves advance()
+// goes through EvaluateStepConditions, not just the legacy single Condition
+// — the case that used to force asset-system to fork into two doc_types just
+// to combine an amount threshold with a category match.
+func TestCompoundConditionSkipsStepUnlessEveryConditionIsMet(t *testing.T) {
+	engine, workflows, _, _ := newTestEngine()
+	gated := step(1, "director_review", domain.ResolverRule{Type: domain.ResolverSuperior, Level: 4})
+	gated.Conditions = []domain.Condition{
+		{Field: "amount", Op: "gt", Value: float64(100)},
+		{Field: "category", Op: "eq", Value: "barcode"},
+	}
+	gated.Logic = domain.LogicAll
+	always := step(2, "supervisor", domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1})
+	workflows.register("assetmgmt", "purchase_order", domain.WorkflowDefinition{
+		ID: "def-1", AppID: "assetmgmt", DocType: "purchase_order", Version: 1, IsActive: true,
+		Steps: []domain.WorkflowStep{gated, always},
+	})
+
+	// amount clears the threshold but category doesn't match: "all" logic
+	// means the step must still be skipped.
+	req, err := engine.CreateRequest(context.Background(), "assetmgmt", "purchase_order", "PO-1", "SA01",
+		map[string]any{"amount": float64(500), "category": "field_device"})
+	require.NoError(t, err)
+
+	require.Len(t, req.Steps, 2, "expected the skipped step to still be recorded")
+	assert.Equal(t, domain.StepSkipped, req.Steps[0].Status)
+	require.Equal(t, domain.StepActive, req.Steps[1].Status)
+}
+
+// TestDecisionLosesRaceToCloseAlreadyClosedStep reproduces, deterministically,
+// the interleaving a genuine concurrency race would produce: FR02's decision
+// reads its own assignment as "pending" (so it proceeds) but by the time it
+// tries to close the step, another decision has already closed it — exactly
+// what happens when two approvers on an "any"-mode step (or an approval
+// racing a rejection) submit within microseconds of each other. Before the
+// UpdateStepStatus/UpdateAssignmentDecision compare-and-swap, both sides of
+// such a race would blindly overwrite the step and each independently call
+// completeRequest/advance, leaving a request whose final status contradicts
+// its own step history. This proves the losing side instead backs off
+// cleanly: no error surfaced to a legitimate approver, no double-advance.
+func TestDecisionLosesRaceToCloseAlreadyClosedStep(t *testing.T) {
+	engine, workflows, requests, _ := newTestEngine()
+	s := step(1, "finance_review", domain.ResolverRule{Type: domain.ResolverRole, Position: "Finance Reviewer"})
+	workflows.register("assetmgmt", "expense", domain.WorkflowDefinition{
+		ID: "def-1", AppID: "assetmgmt", DocType: "expense", Version: 1, IsActive: true,
+		Steps: []domain.WorkflowStep{s},
+	})
+
+	req, err := engine.CreateRequest(context.Background(), "assetmgmt", "expense", "EXP-1", "SA01", nil)
+	require.NoError(t, err)
+	require.Len(t, req.Steps[0].Assignments, 2, "expected both finance reviewers assigned")
+	stepID := req.Steps[0].ID
+
+	// Simulate "meanwhile, FR01's decision already closed this step" landing
+	// in the instant between FR02's assignment write and FR02's attempt to
+	// close the step itself.
+	requests.beforeUpdateStepStatus = func() {
+		requests.steps[stepID].Status = domain.StepApproved
+	}
+
+	got, err := engine.RecordDecision(context.Background(), req.ID, "FR02", domain.StatusApproved, nil)
+	require.NoError(t, err, "losing the race to close the step must not surface as an error to a legitimate approver")
+	require.NotNil(t, got)
+
+	var fr02 *domain.ApprovalAssignment
+	for i := range got.Steps[0].Assignments {
+		if got.Steps[0].Assignments[i].UserID == "FR02" {
+			fr02 = &got.Steps[0].Assignments[i]
+		}
+	}
+	require.NotNil(t, fr02, "FR02's own vote should still be honestly on the record")
+	assert.Equal(t, domain.StatusApproved, fr02.Status)
+
+	assert.Len(t, got.Steps, 1, "must not have advanced/duplicated a step it lost the race to close")
+	assert.Equal(t, domain.StepApproved, got.Steps[0].Status)
+}
+
+// TestCreateRequestRollsBackOnAdvanceFailure proves a request that fails to
+// materialize its first step doesn't leave a permanent zero-progress
+// "ghost" row behind: before this fix, the request row committed before
+// advance() ran, so a condition referencing a payload value of the wrong
+// type (a string where a number was expected) would leave a row that could
+// never be decided on, yet a retry would find it via FindByResource and
+// report success as if nothing were wrong.
+func TestCreateRequestRollsBackOnAdvanceFailure(t *testing.T) {
+	engine, workflows, requests, _ := newTestEngine()
+	bad := step(1, "director_review", domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1})
+	bad.Condition = &domain.Condition{Field: "amount", Op: "gt", Value: float64(100)}
+	workflows.register("assetmgmt", "purchase_order", domain.WorkflowDefinition{
+		ID: "def-1", AppID: "assetmgmt", DocType: "purchase_order", Version: 1, IsActive: true,
+		Steps: []domain.WorkflowStep{bad},
+	})
+
+	_, err := engine.CreateRequest(context.Background(), "assetmgmt", "purchase_order", "PO-1", "SA01",
+		map[string]any{"amount": "not-a-number"})
+	require.Error(t, err, "a non-numeric amount against a numeric condition must fail, not silently pass")
+
+	assert.Empty(t, requests.requests, "a failed create must not leave a ghost request row behind")
+	assert.Empty(t, requests.stepOrder, "a failed create must not leave orphaned steps behind")
+}
+
 func TestResolutionFailureParksTheRequest(t *testing.T) {
 	engine, workflows, _, events := newTestEngine()
 	tooHigh := step(1, "way_above_ceo", domain.ResolverRule{Type: domain.ResolverSuperior, Level: 9})

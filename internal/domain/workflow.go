@@ -23,6 +23,13 @@ const (
 // ScopeSameDepartment restricts a role rule to the requester's own department.
 const ScopeSameDepartment = "same_department"
 
+// Combine logic for a step's Conditions list. Only meaningful when Conditions
+// is used instead of the single legacy Condition field.
+const (
+	LogicAll = "all" // every condition must pass (default when omitted)
+	LogicAny = "any" // at least one condition must pass
+)
+
 // ResolverRule says how to find the approver(s) for a step. Stored as JSON so
 // system-support users can add new flows without a code change.
 type ResolverRule struct {
@@ -60,6 +67,14 @@ type WorkflowDefinition struct {
 }
 
 // WorkflowStep is one stage of a blueprint.
+//
+// A step gates on at most one of Condition or Conditions — never both (see
+// ValidateStep). Condition is the original single-condition shape and stays
+// exactly as it behaved before; Conditions+Logic is the compound form for a
+// step that needs to test more than one payload field (e.g. amount AND
+// category) without a consumer having to fork into multiple doc_types to
+// fake an AND. EvaluateStepConditions is what actually decides whether a
+// step runs — it checks Conditions first, falling back to Condition.
 type WorkflowStep struct {
 	ID           string       `json:"id"`
 	DefinitionID string       `json:"definition_id"`
@@ -67,6 +82,8 @@ type WorkflowStep struct {
 	Name         string       `json:"name"`
 	ResolverRule ResolverRule `json:"resolver_rule"`
 	Condition    *Condition   `json:"condition,omitempty"`
+	Conditions   []Condition  `json:"conditions,omitempty"`
+	Logic        string       `json:"logic,omitempty"` // LogicAll (default) or LogicAny; only used with Conditions
 	ApprovalMode string       `json:"approval_mode"`
 	OnEmpty      string       `json:"on_empty"`
 }

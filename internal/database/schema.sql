@@ -60,18 +60,28 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
 --
 -- condition: {"field":"amount","op":"gt","value":50000000}   (null = always run)
 --
+-- conditions + condition_logic: the compound form, for a step that needs more
+-- than one payload field to gate it (e.g. amount AND category) without
+-- forking into multiple doc_types to fake an AND. A step sets either
+-- condition or conditions, never both (enforced by service.ValidateStep).
+--   conditions: [{"field":"amount","op":"gt","value":50000000},
+--                {"field":"category","op":"eq","value":"barcode"}]
+--   condition_logic: "all" (default) or "any"
+--
 -- on_empty: what to do when the rule resolves to nobody (chain too short, no
 -- one holds that position). 'fail' parks the request for a human to look at;
 -- 'skip' moves on. Default 'fail' so an approval is never silently dropped.
 CREATE TABLE IF NOT EXISTS workflow_steps (
-    id            TEXT PRIMARY KEY,
-    definition_id TEXT NOT NULL REFERENCES workflow_definitions(id),
-    step_order    INTEGER NOT NULL,
-    name          TEXT NOT NULL,
-    resolver_rule TEXT NOT NULL,
-    condition     TEXT,
-    approval_mode TEXT NOT NULL DEFAULT 'any',   -- any | all
-    on_empty      TEXT NOT NULL DEFAULT 'fail',  -- fail | skip
+    id              TEXT PRIMARY KEY,
+    definition_id   TEXT NOT NULL REFERENCES workflow_definitions(id),
+    step_order      INTEGER NOT NULL,
+    name            TEXT NOT NULL,
+    resolver_rule   TEXT NOT NULL,
+    condition       TEXT,
+    conditions      TEXT,
+    condition_logic TEXT,
+    approval_mode   TEXT NOT NULL DEFAULT 'any',   -- any | all
+    on_empty        TEXT NOT NULL DEFAULT 'fail',  -- fail | skip
     UNIQUE (definition_id, step_order)
 );
 

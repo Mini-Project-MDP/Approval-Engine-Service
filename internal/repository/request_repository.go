@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"approval-engine-service/internal/domain"
 )
@@ -20,6 +21,13 @@ func NewRequestRepository(db *sql.DB) *RequestRepository {
 	return &RequestRepository{db: db}
 }
 
+// CreateRequest inserts a new request. If another request already exists for
+// the same (app_id, doc_type, resource_id) — the losing side of two
+// concurrent creates racing for the same resource — it returns
+// domain.ErrDuplicateRequest instead of the raw constraint error, so the
+// caller can look the existing row up and treat this as an idempotent
+// replay rather than a failure. The common case (a sequential retry) never
+// reaches this: the handler checks FindByResource first.
 func (r *RequestRepository) CreateRequest(ctx context.Context, req *domain.ApprovalRequest) error {
 	payloadJSON, err := json.Marshal(req.Payload)
 	if err != nil {
@@ -32,9 +40,48 @@ func (r *RequestRepository) CreateRequest(ctx context.Context, req *domain.Appro
 		req.ID, req.AppID, req.DefinitionID, req.DocType, req.ResourceID, req.RequesterID,
 		string(payloadJSON), req.Status, req.CurrentStepOrder)
 	if err != nil {
+		if isUniqueConstraintErr(err) {
+			return domain.ErrDuplicateRequest
+		}
 		return fmt.Errorf("insert request: %w", err)
 	}
 	return nil
+}
+
+// isUniqueConstraintErr reports whether err is a SQLite/libsql UNIQUE
+// constraint violation. The libsql-client-go driver (an HTTP client, not
+// mattn/go-sqlite3) doesn't surface a typed sentinel for this, only a plain
+// error string, so matching the message is the only option available here.
+func isUniqueConstraintErr(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "unique constraint")
+}
+
+// DeleteRequestCascade removes a request and everything materialized under
+// it (assignments, steps, audit events). Used only to compensate for a
+// CreateRequest call that failed partway through materializing its first
+// step (see Engine.rollbackFailedCreate) — never called on a request that
+// has already reached a caller successfully.
+func (r *RequestRepository) DeleteRequestCascade(ctx context.Context, requestID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM approval_assignments WHERE step_id IN (SELECT id FROM approval_steps WHERE request_id = ?)`, requestID); err != nil {
+		return fmt.Errorf("delete assignments: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM approval_steps WHERE request_id = ?`, requestID); err != nil {
+		return fmt.Errorf("delete steps: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM approval_events WHERE request_id = ?`, requestID); err != nil {
+		return fmt.Errorf("delete events: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM approval_requests WHERE id = ?`, requestID); err != nil {
+		return fmt.Errorf("delete request: %w", err)
+	}
+	return tx.Commit()
 }
 
 // GetByID loads a request with its steps and each step's assignments.
@@ -181,12 +228,21 @@ func (r *RequestRepository) CreateStep(ctx context.Context, step *domain.Approva
 	return nil
 }
 
-func (r *RequestRepository) UpdateStepStatus(ctx context.Context, stepID, status string, completedAt *string) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE approval_steps SET status = ?, completed_at = ? WHERE id = ?`, status, completedAt, stepID)
+// UpdateStepStatus transitions stepID out of "active" and reports whether
+// this call actually made the change (false means the step was no longer
+// "active" — another decision closed it first; see Engine.RecordDecision).
+func (r *RequestRepository) UpdateStepStatus(ctx context.Context, stepID, status string, completedAt *string) (bool, error) {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE approval_steps SET status = ?, completed_at = ? WHERE id = ? AND status = ?`,
+		status, completedAt, stepID, domain.StepActive)
 	if err != nil {
-		return fmt.Errorf("update step status: %w", err)
+		return false, fmt.Errorf("update step status: %w", err)
 	}
-	return nil
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("update step status: rows affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 func (r *RequestRepository) listSteps(ctx context.Context, requestID string) ([]domain.ApprovalStep, error) {
@@ -287,14 +343,22 @@ func (r *RequestRepository) ListAssignmentsByStep(ctx context.Context, stepID st
 	return out, rows.Err()
 }
 
-func (r *RequestRepository) UpdateAssignmentDecision(ctx context.Context, id, status string, comment *string, actedAt string) error {
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE approval_assignments SET status = ?, comment = ?, acted_at = ? WHERE id = ?`,
-		status, comment, actedAt, id)
+// UpdateAssignmentDecision records a decision on assignment id and reports
+// whether this call actually made the change (false means the assignment
+// was no longer "pending" — a duplicate/concurrent decision already landed;
+// see Engine.RecordDecision).
+func (r *RequestRepository) UpdateAssignmentDecision(ctx context.Context, id, status string, comment *string, actedAt string) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE approval_assignments SET status = ?, comment = ?, acted_at = ? WHERE id = ? AND status = ?`,
+		status, comment, actedAt, id, domain.StatusPending)
 	if err != nil {
-		return fmt.Errorf("update assignment decision: %w", err)
+		return false, fmt.Errorf("update assignment decision: %w", err)
 	}
-	return nil
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("update assignment decision: rows affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 // SkipPendingAssignments closes out the other approvers on a step once it has

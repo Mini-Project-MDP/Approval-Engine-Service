@@ -31,11 +31,15 @@ func NewWorkflowHandler(workflows WorkflowStore) *WorkflowHandler {
 	return &WorkflowHandler{workflows: workflows}
 }
 
-// StepInput is one step in a PublishWorkflowBody.
+// StepInput is one step in a PublishWorkflowBody. Set either Condition (the
+// original single-condition shape) or Conditions+Logic (compound — "all" by
+// default, or "any"), never both.
 type StepInput struct {
 	Name         string              `json:"name" example:"Supervisor Approval"`
 	ResolverRule domain.ResolverRule `json:"resolver_rule"`
 	Condition    *domain.Condition   `json:"condition,omitempty"`
+	Conditions   []domain.Condition  `json:"conditions,omitempty"`
+	Logic        string              `json:"logic,omitempty" example:"all" enums:"all,any"`
 	ApprovalMode string              `json:"approval_mode" example:"any" enums:"any,all"`
 	OnEmpty      string              `json:"on_empty" example:"fail" enums:"fail,skip"`
 }
@@ -51,7 +55,7 @@ type PublishWorkflowBody struct {
 // Create publishes a new version of a workflow.
 //
 // @Summary Publish a workflow (create or edit)
-// @Description Always inserts a brand new version and atomically deactivates every other version of (app_id, doc_type) — same call whether the pair is new or already exists. In-flight requests keep running against the exact version they started with. Each step's resolver_rule/condition is validated immediately (unknown type, missing field, bad operator all fail here, not silently at resolve time).
+// @Description Always inserts a brand new version and atomically deactivates every other version of (app_id, doc_type) — same call whether the pair is new or already exists. In-flight requests keep running against the exact version they started with. Each step's resolver_rule/condition is validated immediately (unknown type, missing field, bad operator all fail here, not silently at resolve time). A step gates on either the single `condition` field or the compound `conditions`+`logic` fields ("all"/"any"), never both.
 // @Tags workflows
 // @Accept json
 // @Produce json
@@ -85,7 +89,8 @@ func (h *WorkflowHandler) Create(c *fiber.Ctx) error {
 		}
 		step := domain.WorkflowStep{
 			ID: uuid.NewString(), StepOrder: i + 1, Name: s.Name,
-			ResolverRule: s.ResolverRule, Condition: s.Condition, ApprovalMode: mode, OnEmpty: onEmpty,
+			ResolverRule: s.ResolverRule, Condition: s.Condition, Conditions: s.Conditions, Logic: s.Logic,
+			ApprovalMode: mode, OnEmpty: onEmpty,
 		}
 		if err := service.ValidateStep(step); err != nil {
 			return response.Error(c, fiber.StatusBadRequest, fmt.Sprintf("step %d: %s", i+1, err.Error()))

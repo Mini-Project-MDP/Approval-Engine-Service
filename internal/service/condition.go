@@ -51,6 +51,50 @@ func EvaluateCondition(c *domain.Condition, payload map[string]any) (bool, error
 	}
 }
 
+// EvaluateStepConditions decides whether step should run. It checks
+// step.Conditions first (combined by step.Logic — LogicAll if Logic is
+// empty), falling back to the legacy single step.Condition when Conditions
+// is empty, so a workflow published before Conditions existed behaves
+// exactly as before. ValidateStep rejects a step that sets both, so callers
+// here don't need to guess which one "wins".
+func EvaluateStepConditions(step domain.WorkflowStep, payload map[string]any) (bool, error) {
+	if len(step.Conditions) == 0 {
+		return EvaluateCondition(step.Condition, payload)
+	}
+
+	logic := step.Logic
+	if logic == "" {
+		logic = domain.LogicAll
+	}
+
+	switch logic {
+	case domain.LogicAll:
+		for i := range step.Conditions {
+			ok, err := EvaluateCondition(&step.Conditions[i], payload)
+			if err != nil {
+				return false, err
+			}
+			if !ok {
+				return false, nil
+			}
+		}
+		return true, nil
+	case domain.LogicAny:
+		for i := range step.Conditions {
+			ok, err := EvaluateCondition(&step.Conditions[i], payload)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
+		return false, fmt.Errorf("unknown condition logic %q", logic)
+	}
+}
+
 func compareNumbers(op string, actual, expected any) (bool, error) {
 	// These operators are numeric by definition, so a numeric string is
 	// accepted on both sides: thresholds typed into the workflow admin form

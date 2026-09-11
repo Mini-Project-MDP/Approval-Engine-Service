@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -73,6 +74,15 @@ func (h *RequestHandler) Create(c *fiber.Ctx) error {
 
 	req, err := h.engine.CreateRequest(c.Context(), appID, body.DocType, body.ResourceID, body.RequesterID, body.Payload)
 	if err != nil {
+		if errors.Is(err, domain.ErrDuplicateRequest) {
+			// Lost the race: another request for the same resource was
+			// inserted between our FindByResource check above and this
+			// insert. Look it up and reply as if we'd found it up front —
+			// concurrent retries are idempotent too, not just sequential ones.
+			if existing, findErr := h.requests.FindByResource(c.Context(), appID, body.DocType, body.ResourceID); findErr == nil && existing != nil {
+				return response.Success(c, fiber.StatusOK, "request already exists for this resource", existing)
+			}
+		}
 		return response.Error(c, fiber.StatusBadRequest, err.Error())
 	}
 	return response.Success(c, fiber.StatusCreated, "request created", req)

@@ -31,6 +31,19 @@ func TestValidateStep(t *testing.T) {
 		{"bad on_empty", domain.WorkflowStep{Name: "x", ResolverRule: domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1}, ApprovalMode: domain.ModeAny, OnEmpty: "retry"}},
 		{"condition missing field", domain.WorkflowStep{Name: "x", ResolverRule: domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1}, ApprovalMode: domain.ModeAny, OnEmpty: domain.OnEmptyFail, Condition: &domain.Condition{Op: "gt", Value: 1}}},
 		{"condition bad operator", domain.WorkflowStep{Name: "x", ResolverRule: domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1}, ApprovalMode: domain.ModeAny, OnEmpty: domain.OnEmptyFail, Condition: &domain.Condition{Field: "amount", Op: "between", Value: 1}}},
+		{"condition and conditions both set", domain.WorkflowStep{
+			Name: "x", ResolverRule: domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1}, ApprovalMode: domain.ModeAny, OnEmpty: domain.OnEmptyFail,
+			Condition:  &domain.Condition{Field: "amount", Op: "gt", Value: 1},
+			Conditions: []domain.Condition{{Field: "category", Op: "eq", Value: "barcode"}},
+		}},
+		{"conditions entry missing field", domain.WorkflowStep{
+			Name: "x", ResolverRule: domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1}, ApprovalMode: domain.ModeAny, OnEmpty: domain.OnEmptyFail,
+			Conditions: []domain.Condition{{Op: "gt", Value: 1}},
+		}},
+		{"conditions bad logic", domain.WorkflowStep{
+			Name: "x", ResolverRule: domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1}, ApprovalMode: domain.ModeAny, OnEmpty: domain.OnEmptyFail,
+			Conditions: []domain.Condition{{Field: "amount", Op: "gt", Value: 1}}, Logic: "xor",
+		}},
 	}
 
 	for _, tt := range tests {
@@ -38,4 +51,19 @@ func TestValidateStep(t *testing.T) {
 			assert.Error(t, ValidateStep(tt.s))
 		})
 	}
+}
+
+func TestValidateStepAcceptsCompoundConditions(t *testing.T) {
+	s := domain.WorkflowStep{
+		Name:         "x",
+		ResolverRule: domain.ResolverRule{Type: domain.ResolverSuperior, Level: 1},
+		ApprovalMode: domain.ModeAny,
+		OnEmpty:      domain.OnEmptyFail,
+		Conditions: []domain.Condition{
+			{Field: "amount", Op: "gt", Value: 50000000},
+			{Field: "category", Op: "eq", Value: "barcode"},
+		},
+		Logic: domain.LogicAny,
+	}
+	assert.NoError(t, ValidateStep(s), "expected a well-formed compound condition to pass")
 }

@@ -50,6 +50,14 @@ type fakeRequestRepo struct {
 	steps       map[string]*domain.ApprovalStep
 	stepOrder   map[string][]string // requestID -> step ids in creation order
 	assignments map[string]*domain.ApprovalAssignment
+
+	// beforeUpdateStepStatus, if set, fires exactly once, right before
+	// UpdateStepStatus applies its compare-and-swap. Tests use it to inject
+	// the interleaving a genuine concurrency race would produce (a step
+	// closed by someone else between this call's earlier reads and this
+	// point) — something the fake's plain maps can't reproduce by actually
+	// running goroutines against it.
+	beforeUpdateStepStatus func()
 }
 
 func newFakeRequestRepo() *fakeRequestRepo {
@@ -64,6 +72,23 @@ func newFakeRequestRepo() *fakeRequestRepo {
 func (f *fakeRequestRepo) CreateRequest(_ context.Context, req *domain.ApprovalRequest) error {
 	cp := *req
 	f.requests[req.ID] = &cp
+	return nil
+}
+
+// DeleteRequestCascade mirrors RequestRepository.DeleteRequestCascade well
+// enough for tests that exercise Engine.rollbackFailedCreate: it removes the
+// request and everything keyed off it from the fake's in-memory maps.
+func (f *fakeRequestRepo) DeleteRequestCascade(_ context.Context, requestID string) error {
+	for _, sid := range f.stepOrder[requestID] {
+		delete(f.steps, sid)
+		for aid, a := range f.assignments {
+			if a.StepID == sid {
+				delete(f.assignments, aid)
+			}
+		}
+	}
+	delete(f.stepOrder, requestID)
+	delete(f.requests, requestID)
 	return nil
 }
 
@@ -105,10 +130,23 @@ func (f *fakeRequestRepo) CreateStep(_ context.Context, step *domain.ApprovalSte
 	return nil
 }
 
-func (f *fakeRequestRepo) UpdateStepStatus(_ context.Context, stepID, status string, completedAt *string) error {
-	f.steps[stepID].Status = status
-	f.steps[stepID].CompletedAt = completedAt
-	return nil
+// UpdateStepStatus mirrors the repository's compare-and-swap: it only
+// transitions (and reports true) when the step is currently "active", so
+// tests can exercise the same lost-the-race path RecordDecision handles
+// against the real database.
+func (f *fakeRequestRepo) UpdateStepStatus(_ context.Context, stepID, status string, completedAt *string) (bool, error) {
+	if f.beforeUpdateStepStatus != nil {
+		hook := f.beforeUpdateStepStatus
+		f.beforeUpdateStepStatus = nil
+		hook()
+	}
+	s := f.steps[stepID]
+	if s.Status != domain.StepActive {
+		return false, nil
+	}
+	s.Status = status
+	s.CompletedAt = completedAt
+	return true, nil
 }
 
 func (f *fakeRequestRepo) CreateAssignment(_ context.Context, a *domain.ApprovalAssignment) error {
@@ -137,12 +175,19 @@ func (f *fakeRequestRepo) ListAssignmentsByStep(_ context.Context, stepID string
 	return out, nil
 }
 
-func (f *fakeRequestRepo) UpdateAssignmentDecision(_ context.Context, id, status string, comment *string, actedAt string) error {
+// UpdateAssignmentDecision mirrors the repository's compare-and-swap: it
+// only records (and reports true) when the assignment is currently
+// "pending", so tests can exercise the same lost-the-race path
+// RecordDecision handles against the real database.
+func (f *fakeRequestRepo) UpdateAssignmentDecision(_ context.Context, id, status string, comment *string, actedAt string) (bool, error) {
 	a := f.assignments[id]
+	if a.Status != domain.StatusPending {
+		return false, nil
+	}
 	a.Status = status
 	a.Comment = comment
 	a.ActedAt = &actedAt
-	return nil
+	return true, nil
 }
 
 func (f *fakeRequestRepo) SkipPendingAssignments(_ context.Context, stepID string) error {

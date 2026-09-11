@@ -1,5 +1,17 @@
 package domain
 
+import "errors"
+
+// ErrDuplicateRequest is what RequestRepository.CreateRequest returns when a
+// request for the same (app_id, doc_type, resource_id) already exists in the
+// database — the losing side of a race between two concurrent creates for
+// the same resource (e.g. two retries of a timed-out call arriving at once).
+// Callers must treat this exactly like finding the row via FindByResource up
+// front: look it up and return the existing request, not an error, so the
+// "safe to retry" guarantee documented on POST /requests holds under
+// concurrency too, not just for sequential retries.
+var ErrDuplicateRequest = errors.New("request already exists for this app/doc_type/resource_id")
+
 // Request / step / assignment statuses.
 const (
 	StatusPending   = "pending"

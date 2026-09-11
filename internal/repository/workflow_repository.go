@@ -190,10 +190,19 @@ func insertDefinitionTx(ctx context.Context, tx *sql.Tx, def *domain.WorkflowDef
 			conditionJSON = string(b)
 		}
 
+		var conditionsJSON any
+		if len(step.Conditions) > 0 {
+			b, err := json.Marshal(step.Conditions)
+			if err != nil {
+				return fmt.Errorf("marshal conditions: %w", err)
+			}
+			conditionsJSON = string(b)
+		}
+
 		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO workflow_steps (id, definition_id, step_order, name, resolver_rule, condition, approval_mode, on_empty)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			step.ID, def.ID, step.StepOrder, step.Name, string(ruleJSON), conditionJSON, step.ApprovalMode, step.OnEmpty,
+			INSERT INTO workflow_steps (id, definition_id, step_order, name, resolver_rule, condition, conditions, condition_logic, approval_mode, on_empty)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			step.ID, def.ID, step.StepOrder, step.Name, string(ruleJSON), conditionJSON, conditionsJSON, nullableString(step.Logic), step.ApprovalMode, step.OnEmpty,
 		); err != nil {
 			return fmt.Errorf("insert step %d: %w", step.StepOrder, err)
 		}
@@ -204,7 +213,7 @@ func insertDefinitionTx(ctx context.Context, tx *sql.Tx, def *domain.WorkflowDef
 
 func (r *WorkflowRepository) loadSteps(ctx context.Context, definitionID string) ([]domain.WorkflowStep, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, definition_id, step_order, name, resolver_rule, condition, approval_mode, on_empty
+		SELECT id, definition_id, step_order, name, resolver_rule, condition, conditions, condition_logic, approval_mode, on_empty
 		FROM workflow_steps WHERE definition_id = ? ORDER BY step_order`, definitionID)
 	if err != nil {
 		return nil, fmt.Errorf("load steps: %w", err)
@@ -216,9 +225,9 @@ func (r *WorkflowRepository) loadSteps(ctx context.Context, definitionID string)
 	for rows.Next() {
 		var s domain.WorkflowStep
 		var ruleJSON string
-		var conditionJSON sql.NullString
+		var conditionJSON, conditionsJSON, logic sql.NullString
 
-		if err := rows.Scan(&s.ID, &s.DefinitionID, &s.StepOrder, &s.Name, &ruleJSON, &conditionJSON, &s.ApprovalMode, &s.OnEmpty); err != nil {
+		if err := rows.Scan(&s.ID, &s.DefinitionID, &s.StepOrder, &s.Name, &ruleJSON, &conditionJSON, &conditionsJSON, &logic, &s.ApprovalMode, &s.OnEmpty); err != nil {
 			return nil, fmt.Errorf("scan step: %w", err)
 		}
 		if err := json.Unmarshal([]byte(ruleJSON), &s.ResolverRule); err != nil {
@@ -231,6 +240,12 @@ func (r *WorkflowRepository) loadSteps(ctx context.Context, definitionID string)
 			}
 			s.Condition = &c
 		}
+		if conditionsJSON.Valid && conditionsJSON.String != "" {
+			if err := json.Unmarshal([]byte(conditionsJSON.String), &s.Conditions); err != nil {
+				return nil, fmt.Errorf("unmarshal conditions for step %s: %w", s.ID, err)
+			}
+		}
+		s.Logic = logic.String
 		out = append(out, s)
 	}
 	return out, rows.Err()

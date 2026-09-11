@@ -47,6 +47,12 @@ func Migrate(db *sql.DB) error {
 	if err := addColumnIfMissing(db, "applications", "callback_url", "TEXT"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(db, "workflow_steps", "conditions", "TEXT"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "workflow_steps", "condition_logic", "TEXT"); err != nil {
+		return err
+	}
 	return nil
 }
 

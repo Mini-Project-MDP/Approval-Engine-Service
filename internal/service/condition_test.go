@@ -50,3 +50,46 @@ func TestEvaluateConditionRejectsUnknownOperator(t *testing.T) {
 	_, err := EvaluateCondition(&domain.Condition{Field: "amount", Op: "between", Value: 1}, map[string]any{"amount": 5})
 	assert.Error(t, err, "expected an error for an unknown operator")
 }
+
+func TestEvaluateStepConditions(t *testing.T) {
+	payload := map[string]any{
+		"amount":   float64(75000000),
+		"category": "barcode",
+	}
+	above := domain.Condition{Field: "amount", Op: "gt", Value: float64(50000000)}
+	below := domain.Condition{Field: "amount", Op: "gt", Value: float64(100000000)}
+	isBarcode := domain.Condition{Field: "category", Op: "eq", Value: "barcode"}
+	isFieldDevice := domain.Condition{Field: "category", Op: "eq", Value: "field_device"}
+
+	tests := []struct {
+		name string
+		step domain.WorkflowStep
+		want bool
+	}{
+		{"no condition at all always runs", domain.WorkflowStep{}, true},
+		{"falls back to legacy single Condition", domain.WorkflowStep{Condition: &above}, true},
+		{"legacy single Condition unmet", domain.WorkflowStep{Condition: &below}, false},
+		{"all logic: every condition passes", domain.WorkflowStep{Conditions: []domain.Condition{above, isBarcode}, Logic: domain.LogicAll}, true},
+		{"all logic: one condition fails the whole step", domain.WorkflowStep{Conditions: []domain.Condition{above, isFieldDevice}, Logic: domain.LogicAll}, false},
+		{"empty logic defaults to all", domain.WorkflowStep{Conditions: []domain.Condition{above, isBarcode}}, true},
+		{"any logic: one passing condition is enough", domain.WorkflowStep{Conditions: []domain.Condition{below, isBarcode}, Logic: domain.LogicAny}, true},
+		{"any logic: none pass", domain.WorkflowStep{Conditions: []domain.Condition{below, isFieldDevice}, Logic: domain.LogicAny}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := EvaluateStepConditions(tt.step, payload)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestEvaluateStepConditionsRejectsUnknownLogic(t *testing.T) {
+	step := domain.WorkflowStep{
+		Conditions: []domain.Condition{{Field: "amount", Op: "gt", Value: 1}},
+		Logic:      "xor",
+	}
+	_, err := EvaluateStepConditions(step, map[string]any{"amount": 5})
+	assert.Error(t, err, "expected an error for an unknown logic combinator")
+}

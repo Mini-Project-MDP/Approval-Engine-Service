@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,16 +22,27 @@ type WorkflowRepository interface {
 type RequestRepository interface {
 	CreateRequest(ctx context.Context, req *domain.ApprovalRequest) error
 	GetByID(ctx context.Context, id string) (*domain.ApprovalRequest, error)
+	// DeleteRequestCascade removes a request and anything materialized under
+	// it (steps, assignments, events). Used only to clean up after
+	// CreateRequest fails partway through (see the doc comment there) — never
+	// called on a request that has already reached a caller.
+	DeleteRequestCascade(ctx context.Context, requestID string) error
 	UpdateRequestStatus(ctx context.Context, id, status string, completedAt *string) error
 	UpdateCurrentStep(ctx context.Context, id string, stepOrder int) error
 
 	CreateStep(ctx context.Context, step *domain.ApprovalStep) error
-	UpdateStepStatus(ctx context.Context, stepID, status string, completedAt *string) error
+	// UpdateStepStatus transitions stepID out of "active" and reports whether
+	// this call was the one that did it (false means someone else already
+	// closed the step first — see RecordDecision).
+	UpdateStepStatus(ctx context.Context, stepID, status string, completedAt *string) (bool, error)
 
 	CreateAssignment(ctx context.Context, a *domain.ApprovalAssignment) error
 	GetAssignment(ctx context.Context, stepID, userID string) (*domain.ApprovalAssignment, error)
 	ListAssignmentsByStep(ctx context.Context, stepID string) ([]domain.ApprovalAssignment, error)
-	UpdateAssignmentDecision(ctx context.Context, id, status string, comment *string, actedAt string) error
+	// UpdateAssignmentDecision records a decision and reports whether this
+	// call was the one that did it (false means the assignment was no longer
+	// pending — a duplicate/concurrent decision on the same assignment).
+	UpdateAssignmentDecision(ctx context.Context, id, status string, comment *string, actedAt string) (bool, error)
 	SkipPendingAssignments(ctx context.Context, stepID string) error
 }
 
@@ -66,6 +78,16 @@ func NewEngine(workflows WorkflowRepository, requests RequestRepository, events 
 // CreateRequest starts a new approval flow against the app's currently
 // active workflow definition and immediately activates (or skips through)
 // leading steps until an approver is found or the request completes.
+//
+// The request row is inserted before materializing any step, so a failure
+// partway through (e.g. a condition references a payload field sent with
+// the wrong type — see EvaluateCondition) would otherwise leave a permanent
+// zero-progress "ghost" row behind: findActiveStep would never find
+// anything to decide on, yet FindByResource would keep returning it as if
+// the request were fine on every retry. To avoid that, any failure from
+// this point on rolls the request back (best-effort) before returning the
+// error, so the (app_id, doc_type, resource_id) slot is free for a clean
+// retry instead of being silently and permanently stuck.
 func (e *Engine) CreateRequest(ctx context.Context, appID, docType, resourceID, requesterID string, payload map[string]any) (*domain.ApprovalRequest, error) {
 	requester, err := e.participants.GetByID(ctx, requesterID)
 	if err != nil {
@@ -108,13 +130,26 @@ func (e *Engine) CreateRequest(ctx context.Context, appID, docType, resourceID, 
 	if err := e.logEvent(ctx, appID, req.ID, nil, nil, domain.EventRequestCreated, map[string]any{
 		"doc_type": docType, "resource_id": resourceID,
 	}); err != nil {
+		e.rollbackFailedCreate(ctx, req.ID)
 		return nil, err
 	}
 
 	if err := e.advance(ctx, req, def); err != nil {
-		return nil, err
+		e.rollbackFailedCreate(ctx, req.ID)
+		return nil, fmt.Errorf("advance new request: %w", err)
 	}
 	return e.requests.GetByID(ctx, req.ID)
+}
+
+// rollbackFailedCreate best-effort deletes a request (and anything already
+// materialized under it) after CreateRequest fails to reach a stable state.
+// If the cleanup itself fails, that's logged, not returned — the original
+// error is what the caller needs to see, and a leftover row is a lesser
+// problem than masking why creation failed.
+func (e *Engine) rollbackFailedCreate(ctx context.Context, requestID string) {
+	if err := e.requests.DeleteRequestCascade(ctx, requestID); err != nil {
+		log.Printf("engine: cleanup after failed create of request %s: %v", requestID, err)
+	}
 }
 
 // RecordDecision applies one approver's decision on the currently active
@@ -164,8 +199,16 @@ func (e *Engine) RecordDecision(ctx context.Context, requestID, userID, decision
 	}
 
 	now := nowString()
-	if err := e.requests.UpdateAssignmentDecision(ctx, assignment.ID, decision, comment, now); err != nil {
+	changed, err := e.requests.UpdateAssignmentDecision(ctx, assignment.ID, decision, comment, now)
+	if err != nil {
 		return nil, fmt.Errorf("record decision: %w", err)
+	}
+	if !changed {
+		// Lost a race against a duplicate/concurrent decision on this exact
+		// assignment (e.g. a double-submit): the pre-check above read
+		// "pending", but someone else's write landed first. Same outcome as
+		// if we'd read their state to begin with.
+		return nil, fmt.Errorf("user %q already acted on this step", userID)
 	}
 
 	eventType := domain.EventApproved
@@ -178,8 +221,20 @@ func (e *Engine) RecordDecision(ctx context.Context, requestID, userID, decision
 	}
 
 	if decision == domain.StatusRejected {
-		if err := e.requests.UpdateStepStatus(ctx, activeStep.ID, domain.StepRejected, &now); err != nil {
+		closed, err := e.requests.UpdateStepStatus(ctx, activeStep.ID, domain.StepRejected, &now)
+		if err != nil {
 			return nil, fmt.Errorf("close rejected step: %w", err)
+		}
+		if !closed {
+			// Another decision on this same step (an approval satisfying
+			// "any" mode, or another rejection) closed it first — this
+			// rejection is on the audit trail via the assignment update
+			// above, but arrived too late to change the step/request
+			// outcome. Without this guard, both sides of the race would
+			// otherwise blindly overwrite the step status and each call
+			// completeRequest/advance independently, leaving a request
+			// whose final status contradicts its own step history.
+			return e.requests.GetByID(ctx, requestID)
 		}
 		if err := e.requests.SkipPendingAssignments(ctx, activeStep.ID); err != nil {
 			return nil, fmt.Errorf("skip remaining approvers: %w", err)
@@ -199,8 +254,15 @@ func (e *Engine) RecordDecision(ctx context.Context, requestID, userID, decision
 		return e.requests.GetByID(ctx, requestID)
 	}
 
-	if err := e.requests.UpdateStepStatus(ctx, activeStep.ID, domain.StepApproved, &now); err != nil {
+	closed, err := e.requests.UpdateStepStatus(ctx, activeStep.ID, domain.StepApproved, &now)
+	if err != nil {
 		return nil, fmt.Errorf("close approved step: %w", err)
+	}
+	if !closed {
+		// Same race as above, the other direction: a concurrent decision
+		// (e.g. a rejection, or — in "any" mode — another approver) already
+		// closed this step. Nothing left for this call to do.
+		return e.requests.GetByID(ctx, requestID)
 	}
 	if err := e.requests.SkipPendingAssignments(ctx, activeStep.ID); err != nil {
 		return nil, fmt.Errorf("skip remaining approvers: %w", err)
@@ -231,7 +293,7 @@ func (e *Engine) advance(ctx context.Context, req *domain.ApprovalRequest, def *
 			continue
 		}
 
-		runs, err := EvaluateCondition(step.Condition, req.Payload)
+		runs, err := EvaluateStepConditions(step, req.Payload)
 		if err != nil {
 			return fmt.Errorf("step %d condition: %w", step.StepOrder, err)
 		}
