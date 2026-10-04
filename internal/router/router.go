@@ -76,6 +76,7 @@ func Register(app *fiber.App, deps Dependencies) {
 	workflows.Get("/", deps.Workflows.List)
 	workflows.Get("/:id", deps.Workflows.Get)
 	workflows.Post("/:id/deactivate", deps.Workflows.Deactivate)
+	workflows.Post("/:id/activate", deps.Workflows.Activate)
 
 	portal.Get("/participants", deps.Participants.List)
 }

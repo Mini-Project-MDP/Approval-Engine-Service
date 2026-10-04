@@ -175,6 +175,39 @@ func (r *WorkflowRepository) Deactivate(ctx context.Context, id string) error {
 	return nil
 }
 
+// Activate turns one specific version back on and, like Publish, makes it
+// the only active version of its app_id+doc_type, atomically. Re-enabling an
+// older version is therefore also how an admin rolls back an edit.
+func (r *WorkflowRepository) Activate(ctx context.Context, id string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var appID, docType string
+	err = tx.QueryRowContext(ctx,
+		`SELECT app_id, doc_type FROM workflow_definitions WHERE id = ?`, id,
+	).Scan(&appID, &docType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ErrWorkflowNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load definition: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE workflow_definitions SET is_active = 0 WHERE app_id = ? AND doc_type = ?`,
+		appID, docType,
+	); err != nil {
+		return fmt.Errorf("deactivate other versions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE workflow_definitions SET is_active = 1 WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("activate definition: %w", err)
+	}
+	return tx.Commit()
+}
+
 func insertDefinitionTx(ctx context.Context, tx *sql.Tx, def *domain.WorkflowDefinition) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO workflow_definitions (id, app_id, doc_type, name, version, is_active)

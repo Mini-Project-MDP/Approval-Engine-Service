@@ -18,6 +18,7 @@ type WorkflowStore interface {
 	ListDefinitions(ctx context.Context, appID string, page, limit int) ([]domain.WorkflowDefinition, int, error)
 	GetDefinitionByID(ctx context.Context, id string) (*domain.WorkflowDefinition, error)
 	Deactivate(ctx context.Context, id string) error
+	Activate(ctx context.Context, id string) error
 }
 
 // WorkflowHandler is the CRUD surface behind "add/edit/delete an approval
@@ -166,4 +167,24 @@ func (h *WorkflowHandler) Deactivate(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
 	return response.Success(c, fiber.StatusOK, "workflow deactivated", nil)
+}
+
+// Activate is the undo of Deactivate.
+//
+// @Summary Re-activate a workflow version
+// @Description Makes this version the only active one for its (app_id, doc_type) again, deactivating whichever version is active now. Re-activating an older version is how an edit is rolled back. In-flight requests keep running against the exact version they started with.
+// @Tags workflows
+// @Produce json
+// @Param id path string true "Workflow definition ID"
+// @Success 200 {object} response.Envelope
+// @Failure 404 {object} response.Envelope "not found"
+// @Router /portal/workflows/{id}/activate [post]
+func (h *WorkflowHandler) Activate(c *fiber.Ctx) error {
+	if err := h.workflows.Activate(c.Context(), c.Params("id")); err != nil {
+		if errors.Is(err, domain.ErrWorkflowNotFound) {
+			return response.Error(c, fiber.StatusNotFound, err.Error())
+		}
+		return response.Error(c, fiber.StatusInternalServerError, err.Error())
+	}
+	return response.Success(c, fiber.StatusOK, "workflow activated", nil)
 }

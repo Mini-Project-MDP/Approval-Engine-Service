@@ -468,6 +468,41 @@ const docTemplate = `{
                 }
             }
         },
+        "/portal/workflows/{id}/activate": {
+            "post": {
+                "description": "Makes this version the only active one for its (app_id, doc_type) again, deactivating whichever version is active now. Re-activating an older version is how an edit is rolled back. In-flight requests keep running against the exact version they started with.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "workflows"
+                ],
+                "summary": "Re-activate a workflow version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workflow definition ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "not found",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
         "/portal/workflows/{id}/deactivate": {
             "post": {
                 "description": "Stops the version from being used for new requests. Never a hard delete — past requests still reference this definition_id and must stay readable.",
