@@ -46,7 +46,7 @@ type CreateApplicationBody struct {
 // @Param body body CreateApplicationBody true "Application to register"
 // @Success 201 {object} response.Envelope{data=domain.Application} "includes api_key, shown once"
 // @Failure 400 {object} response.Envelope "validation error or duplicate code"
-// @Router /applications [post]
+// @Router /portal/applications [post]
 func (h *ApplicationHandler) Create(c *fiber.Ctx) error {
 	var body CreateApplicationBody
 	if err := c.BodyParser(&body); err != nil {
@@ -80,7 +80,7 @@ func (h *ApplicationHandler) Create(c *fiber.Ctx) error {
 // @Param page query int false "Page number (default 1)"
 // @Param limit query int false "Items per page (default 20, max 100)"
 // @Success 200 {object} response.Envelope{data=response.Page}
-// @Router /applications [get]
+// @Router /portal/applications [get]
 func (h *ApplicationHandler) List(c *fiber.Ctx) error {
 	page, limit := parsePagination(c)
 	apps, total, err := h.apps.List(c.Context(), page, limit)

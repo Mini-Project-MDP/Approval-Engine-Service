@@ -34,13 +34,16 @@ type ImportBody struct {
 // Import upserts a batch of participants.
 //
 // @Summary Import participants (e.g. from a FICOM export)
-// @Description Upserts by user_id (NIK) in one transaction — a partial failure never leaves the table half-updated. Rows may reference a superior_id that appears later in the same array (or not at all yet); foreign keys are deferred to commit time, so the array does not need to be topologically sorted.
+// @Description Upserts by user_id (NIK) in one transaction — a partial failure never leaves the table half-updated. Rows may reference a superior_id that appears later in the same array (or not at all yet); foreign keys are deferred to commit time, so the array does not need to be topologically sorted. Operator-only (X-Admin-Key): the org chart is shared by every consuming application, so no single application's X-API-Key may rewrite it.
 // @Tags participants
 // @Accept json
 // @Produce json
+// @Security AdminKeyAuth
 // @Param body body ImportBody true "Participants to import"
 // @Success 200 {object} response.Envelope
 // @Failure 400 {object} response.Envelope
+// @Failure 401 {object} response.Envelope "missing or invalid X-Admin-Key"
+// @Failure 503 {object} response.Envelope "ADMIN_API_KEY not configured on this deployment"
 // @Router /participants/import [post]
 func (h *ParticipantHandler) Import(c *fiber.Ctx) error {
 	var body ImportBody
@@ -77,7 +80,7 @@ func (h *ParticipantHandler) Import(c *fiber.Ctx) error {
 // @Param page query int false "Page number (default 1)"
 // @Param limit query int false "Items per page (default 20, max 100)"
 // @Success 200 {object} response.Envelope{data=response.Page}
-// @Router /participants [get]
+// @Router /portal/participants [get]
 func (h *ParticipantHandler) List(c *fiber.Ctx) error {
 	page, limit := parsePagination(c)
 	participants, total, err := h.participants.List(c.Context(), page, limit)

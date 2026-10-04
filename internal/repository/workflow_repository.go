@@ -161,8 +161,16 @@ func (r *WorkflowRepository) Publish(ctx context.Context, def *domain.WorkflowDe
 // workflow without immediately replacing it). Never a hard delete: past
 // requests still reference this definition_id and must stay readable.
 func (r *WorkflowRepository) Deactivate(ctx context.Context, id string) error {
-	if _, err := r.db.ExecContext(ctx, `UPDATE workflow_definitions SET is_active = 0 WHERE id = ?`, id); err != nil {
+	res, err := r.db.ExecContext(ctx, `UPDATE workflow_definitions SET is_active = 0 WHERE id = ?`, id)
+	if err != nil {
 		return fmt.Errorf("deactivate definition: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("deactivate definition: %w", err)
+	}
+	if affected == 0 {
+		return domain.ErrWorkflowNotFound
 	}
 	return nil
 }

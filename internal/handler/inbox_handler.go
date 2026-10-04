@@ -31,7 +31,7 @@ func NewInboxHandler(requests InboxReader) *InboxHandler {
 // @Param page query int false "Page number (default 1)"
 // @Param limit query int false "Items per page (default 20, max 100)"
 // @Success 200 {object} response.Envelope{data=response.Page}
-// @Router /inbox/{userID} [get]
+// @Router /portal/inbox/{userID} [get]
 func (h *InboxHandler) List(c *fiber.Ctx) error {
 	page, limit := parsePagination(c)
 	items, total, err := h.requests.ListInbox(c.Context(), c.Params("userID"), page, limit)

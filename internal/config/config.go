@@ -26,6 +26,17 @@ type Config struct {
 	// approved documents. Never expose it; anyone with it could forge a
 	// verifiable-looking approval stamp.
 	VerificationSecret string
+
+	// AdminAPIKey gates operator-only endpoints that change data every
+	// consuming app depends on (e.g. importing the org chart). It is an ops
+	// credential for CLI tools/scripts, never shipped to a browser. Empty
+	// means those endpoints are disabled.
+	AdminAPIKey string
+
+	// PortalEnabled toggles the /portal routes the browser portal uses. They
+	// have no real user authentication until SSO login is wired in, so a
+	// deployment that must be locked down can switch them off.
+	PortalEnabled bool
 }
 
 // Load reads a .env file (if present) and builds a Config from environment
@@ -49,6 +60,9 @@ func Load() *Config {
 
 		PublicBaseURL:      getEnv("PUBLIC_BASE_URL", fmt.Sprintf("http://localhost:%s", appPort)),
 		VerificationSecret: getEnv("VERIFICATION_SECRET", ""),
+
+		AdminAPIKey:   getEnv("ADMIN_API_KEY", ""),
+		PortalEnabled: getEnv("PORTAL_ENABLED", "true") == "true",
 	}
 }
 

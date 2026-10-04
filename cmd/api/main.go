@@ -23,11 +23,14 @@ import (
 // @title Approval Engine API
 // @version 1.0
 // @description Reusable approval workflow engine shared across Mayora internal systems (asset management first). A consuming app's requester_id/user_id are always checked against registered, active participants — the engine never trusts an identity blindly.
-// @description Auth: only POST /requests requires X-API-Key (a consuming application's server-to-server key — never expose it in a browser). Everything else is reached via the internal portal and relies on unguessable UUIDs plus the engine's own "are you the assigned approver" check.
+// @description Auth: every /requests route requires X-API-Key (a consuming application's server-to-server key — never expose it in a browser), and an application only ever sees and decides its own requests. /participants/import requires the operator X-Admin-Key. /portal/* serves the browser portal and can be switched off with PORTAL_ENABLED=false until SSO login is in place.
 // @BasePath /api/v1
 // @securityDefinitions.apikey ApiKeyAuth
 // @in header
 // @name X-API-Key
+// @securityDefinitions.apikey AdminKeyAuth
+// @in header
+// @name X-Admin-Key
 func main() {
 	cfg := config.Load()
 
@@ -77,14 +80,16 @@ func main() {
 	signer := service.NewSignatureService(cfg.VerificationSecret)
 
 	deps := router.Dependencies{
-		Health:       handler.NewHealthHandler(),
-		Requests:     handler.NewRequestHandler(engine, requests),
-		Inbox:        handler.NewInboxHandler(requests),
-		Signature:    handler.NewSignatureHandler(requests, signer, cfg.PublicBaseURL),
-		Applications: handler.NewApplicationHandler(applications),
-		Workflows:    handler.NewWorkflowHandler(workflows),
-		Participants: handler.NewParticipantHandler(participants),
-		APIKeyLookup: applications,
+		Health:        handler.NewHealthHandler(),
+		Requests:      handler.NewRequestHandler(engine, requests),
+		Inbox:         handler.NewInboxHandler(requests),
+		Signature:     handler.NewSignatureHandler(requests, signer, cfg.PublicBaseURL),
+		Applications:  handler.NewApplicationHandler(applications),
+		Workflows:     handler.NewWorkflowHandler(workflows),
+		Participants:  handler.NewParticipantHandler(participants),
+		APIKeyLookup:  applications,
+		AdminAPIKey:   cfg.AdminAPIKey,
+		PortalEnabled: cfg.PortalEnabled,
 	}
 
 	app := fiber.New(fiber.Config{

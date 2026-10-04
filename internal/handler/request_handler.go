@@ -88,14 +88,30 @@ func (h *RequestHandler) Create(c *fiber.Ctx) error {
 	return response.Success(c, fiber.StatusCreated, "request created", req)
 }
 
+// callerAppID is the consuming application RequireAPIKey resolved for this
+// call, or "" on portal routes, which carry no application identity.
+func callerAppID(c *fiber.Ctx) string {
+	appID, _ := c.Locals(middleware.LocalsAppID).(string)
+	return appID
+}
+
+// visibleToCaller reports whether req may be read or decided by this caller:
+// an application only ever reaches its own requests, the portal reaches all.
+func visibleToCaller(c *fiber.Ctx, req *domain.ApprovalRequest) bool {
+	appID := callerAppID(c)
+	return appID == "" || req.AppID == appID
+}
+
 // Get returns one request with its steps and assignments.
 //
 // @Summary Get a request
-// @Description Full request with materialized steps and assignment snapshots. Not gated behind an API key: both the consuming app and the approver portal need to read this, and the id itself is an unguessable UUID.
+// @Description Full request with materialized steps and assignment snapshots. An application can only read its own requests — another application's request id answers 404, so a key never reveals other apps' data.
 // @Tags requests
 // @Produce json
+// @Security ApiKeyAuth
 // @Param id path string true "Request ID"
 // @Success 200 {object} response.Envelope{data=domain.ApprovalRequest}
+// @Failure 401 {object} response.Envelope "missing or invalid X-API-Key"
 // @Failure 404 {object} response.Envelope "not found"
 // @Router /requests/{id} [get]
 func (h *RequestHandler) Get(c *fiber.Ctx) error {
@@ -103,7 +119,7 @@ func (h *RequestHandler) Get(c *fiber.Ctx) error {
 	if err != nil {
 		return response.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
-	if req == nil {
+	if req == nil || !visibleToCaller(c, req) {
 		return response.Error(c, fiber.StatusNotFound, "request not found")
 	}
 	return response.Success(c, fiber.StatusOK, "", req)
@@ -119,14 +135,17 @@ type DecisionBody struct {
 // Decide records one approver's decision.
 //
 // @Summary Approve or reject the active step
-// @Description The engine enforces that user_id is the person assigned to the currently active step (and still an active participant) — this handler does not independently verify the caller's identity beyond that.
+// @Description The calling application vouches for user_id (it has already authenticated that person in its own session); the engine then enforces that user_id is the person assigned to the currently active step and still an active participant. An application can only decide its own requests.
 // @Tags requests
 // @Accept json
 // @Produce json
+// @Security ApiKeyAuth
 // @Param id path string true "Request ID"
 // @Param body body DecisionBody true "Decision"
 // @Success 200 {object} response.Envelope{data=domain.ApprovalRequest}
 // @Failure 400 {object} response.Envelope "not the assigned approver, already decided, or invalid decision"
+// @Failure 401 {object} response.Envelope "missing or invalid X-API-Key"
+// @Failure 404 {object} response.Envelope "not found"
 // @Router /requests/{id}/decision [post]
 func (h *RequestHandler) Decide(c *fiber.Ctx) error {
 	var body DecisionBody
@@ -138,6 +157,16 @@ func (h *RequestHandler) Decide(c *fiber.Ctx) error {
 	}
 	if body.Decision != domain.StatusApproved && body.Decision != domain.StatusRejected {
 		return response.Error(c, fiber.StatusBadRequest, "decision must be 'approved' or 'rejected'")
+	}
+
+	if callerAppID(c) != "" {
+		existing, err := h.requests.GetByID(c.Context(), c.Params("id"))
+		if err != nil {
+			return response.Error(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if existing == nil || !visibleToCaller(c, existing) {
+			return response.Error(c, fiber.StatusNotFound, "request not found")
+		}
 	}
 
 	req, err := h.engine.RecordDecision(c.Context(), c.Params("id"), body.UserID, body.Decision, body.Comment)

@@ -1,5 +1,11 @@
 package domain
 
+import "errors"
+
+// ErrWorkflowNotFound is returned when an operation targets a workflow
+// definition id that does not exist.
+var ErrWorkflowNotFound = errors.New("workflow not found")
+
 // Resolver rule types.
 const (
 	ResolverSuperior = "superior" // walk N steps up the requester's superior chain

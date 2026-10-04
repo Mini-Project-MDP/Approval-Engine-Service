@@ -1,14 +1,125 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "Reusable approval workflow engine shared across Mayora internal systems (asset management first). A consuming app's requester_id/user_id are always checked against registered, active participants — the engine never trusts an identity blindly.\nAuth: only POST /requests requires X-API-Key (a consuming application's server-to-server key — never expose it in a browser). Everything else is reached via the internal portal and relies on unguessable UUIDs plus the engine's own \"are you the assigned approver\" check.",
+        "description": "Reusable approval workflow engine shared across Mayora internal systems (asset management first). A consuming app's requester_id/user_id are always checked against registered, active participants — the engine never trusts an identity blindly.\nAuth: every /requests route requires X-API-Key (a consuming application's server-to-server key — never expose it in a browser), and an application only ever sees and decides its own requests. /participants/import requires the operator X-Admin-Key. /portal/* serves the browser portal and can be switched off with PORTAL_ENABLED=false until SSO login is in place.",
         "title": "Approval Engine API",
         "contact": {},
         "version": "1.0"
     },
     "basePath": "/api/v1",
     "paths": {
-        "/applications": {
+        "/assignments/{id}/qr": {
+            "get": {
+                "description": "PNG QR code encoding a signed verify link for this assignment, meant to be printed on a paper document as a \"signature\" stamp. Not a certified/legally-binding e-signature — a tamper-evident proof that an approval genuinely happened in this engine.",
+                "produces": [
+                    "image/png"
+                ],
+                "tags": [
+                    "signature"
+                ],
+                "summary": "Approval stamp QR code",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Assignment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "image/png",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "assignment not found",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/participants/import": {
+            "post": {
+                "security": [
+                    {
+                        "AdminKeyAuth": []
+                    }
+                ],
+                "description": "Upserts by user_id (NIK) in one transaction — a partial failure never leaves the table half-updated. Rows may reference a superior_id that appears later in the same array (or not at all yet); foreign keys are deferred to commit time, so the array does not need to be topologically sorted. Operator-only (X-Admin-Key): the org chart is shared by every consuming application, so no single application's X-API-Key may rewrite it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "participants"
+                ],
+                "summary": "Import participants (e.g. from a FICOM export)",
+                "parameters": [
+                    {
+                        "description": "Participants to import",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.ImportBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "missing or invalid X-Admin-Key",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    },
+                    "503": {
+                        "description": "ADMIN_API_KEY not configured on this deployment",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/portal/applications": {
             "get": {
                 "description": "Never includes api_key — this is a read view for the management UI, not a way to recover a lost key.",
                 "produces": [
@@ -104,61 +215,7 @@
                 }
             }
         },
-        "/assignments/{id}/qr": {
-            "get": {
-                "description": "PNG QR code encoding a signed verify link for this assignment, meant to be printed on a paper document as a \"signature\" stamp. Not a certified/legally-binding e-signature — a tamper-evident proof that an approval genuinely happened in this engine.",
-                "produces": [
-                    "image/png"
-                ],
-                "tags": [
-                    "signature"
-                ],
-                "summary": "Approval stamp QR code",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Assignment ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "image/png",
-                        "schema": {
-                            "type": "file"
-                        }
-                    },
-                    "404": {
-                        "description": "assignment not found",
-                        "schema": {
-                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
-                        }
-                    }
-                }
-            }
-        },
-        "/health": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "health"
-                ],
-                "summary": "Health check",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
-                        }
-                    }
-                }
-            }
-        },
-        "/inbox/{userID}": {
+        "/portal/inbox/{userID}": {
             "get": {
                 "description": "Everything pending this approver's decision, across every consuming application — the \"one inbox for every system\" promise of a centralized approval portal.",
                 "produces": [
@@ -211,7 +268,7 @@
                 }
             }
         },
-        "/participants": {
+        "/portal/participants": {
             "get": {
                 "produces": [
                     "application/json"
@@ -256,9 +313,59 @@
                 }
             }
         },
-        "/participants/import": {
+        "/portal/workflows": {
+            "get": {
+                "description": "Every version of every workflow (optionally filtered by app_id), for the management list view.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "workflows"
+                ],
+                "summary": "List workflows",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by application ID",
+                        "name": "app_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Items per page (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/approval-engine-service_pkg_response.Page"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
             "post": {
-                "description": "Upserts by user_id (NIK) in one transaction — a partial failure never leaves the table half-updated. Rows may reference a superior_id that appears later in the same array (or not at all yet); foreign keys are deferred to commit time, so the array does not need to be topologically sorted.",
+                "description": "Always inserts a brand new version and atomically deactivates every other version of (app_id, doc_type) — same call whether the pair is new or already exists. In-flight requests keep running against the exact version they started with. Each step's resolver_rule/condition is validated immediately (unknown type, missing field, bad operator all fail here, not silently at resolve time). A step gates on either the single `condition` field or the compound `conditions`+`logic` fields (\"all\"/\"any\"), never both.",
                 "consumes": [
                     "application/json"
                 ],
@@ -266,18 +373,111 @@
                     "application/json"
                 ],
                 "tags": [
-                    "participants"
+                    "workflows"
                 ],
-                "summary": "Import participants (e.g. from a FICOM export)",
+                "summary": "Publish a workflow (create or edit)",
                 "parameters": [
                     {
-                        "description": "Participants to import",
+                        "description": "Workflow to publish",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_handler.ImportBody"
+                            "$ref": "#/definitions/internal_handler.PublishWorkflowBody"
                         }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/approval-engine-service_internal_domain.WorkflowDefinition"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "validation error",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/portal/workflows/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "workflows"
+                ],
+                "summary": "Get a workflow version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workflow definition ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/approval-engine-service_internal_domain.WorkflowDefinition"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "not found",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/portal/workflows/{id}/deactivate": {
+            "post": {
+                "description": "Stops the version from being used for new requests. Never a hard delete — past requests still reference this definition_id and must stay readable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "workflows"
+                ],
+                "summary": "Deactivate a workflow version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workflow definition ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
                     }
                 ],
                 "responses": {
@@ -287,8 +487,8 @@
                             "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
                         }
                     },
-                    "400": {
-                        "description": "Bad Request",
+                    "404": {
+                        "description": "not found",
                         "schema": {
                             "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
                         }
@@ -379,7 +579,12 @@
         },
         "/requests/{id}": {
             "get": {
-                "description": "Full request with materialized steps and assignment snapshots. Not gated behind an API key: both the consuming app and the approver portal need to read this, and the id itself is an unguessable UUID.",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Full request with materialized steps and assignment snapshots. An application can only read its own requests — another application's request id answers 404, so a key never reveals other apps' data.",
                 "produces": [
                     "application/json"
                 ],
@@ -415,6 +620,12 @@
                             ]
                         }
                     },
+                    "401": {
+                        "description": "missing or invalid X-API-Key",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    },
                     "404": {
                         "description": "not found",
                         "schema": {
@@ -426,7 +637,12 @@
         },
         "/requests/{id}/decision": {
             "post": {
-                "description": "The engine enforces that user_id is the person assigned to the currently active step (and still an active participant) — this handler does not independently verify the caller's identity beyond that.",
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "The calling application vouches for user_id (it has already authenticated that person in its own session); the engine then enforces that user_id is the person assigned to the currently active step and still an active participant. An application can only decide its own requests.",
                 "consumes": [
                     "application/json"
                 ],
@@ -479,6 +695,18 @@
                         "schema": {
                             "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
                         }
+                    },
+                    "401": {
+                        "description": "missing or invalid X-API-Key",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "not found",
+                        "schema": {
+                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
+                        }
                     }
                 }
             }
@@ -524,183 +752,6 @@
                     },
                     "404": {
                         "description": "assignment not found",
-                        "schema": {
-                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
-                        }
-                    }
-                }
-            }
-        },
-        "/workflows": {
-            "get": {
-                "description": "Every version of every workflow (optionally filtered by app_id), for the management list view.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "workflows"
-                ],
-                "summary": "List workflows",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Filter by application ID",
-                        "name": "app_id",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Page number (default 1)",
-                        "name": "page",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Items per page (default 20, max 100)",
-                        "name": "limit",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/approval-engine-service_pkg_response.Page"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            },
-            "post": {
-                "description": "Always inserts a brand new version and atomically deactivates every other version of (app_id, doc_type) — same call whether the pair is new or already exists. In-flight requests keep running against the exact version they started with. Each step's resolver_rule/condition is validated immediately (unknown type, missing field, bad operator all fail here, not silently at resolve time).",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "workflows"
-                ],
-                "summary": "Publish a workflow (create or edit)",
-                "parameters": [
-                    {
-                        "description": "Workflow to publish",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_handler.PublishWorkflowBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/approval-engine-service_internal_domain.WorkflowDefinition"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "validation error",
-                        "schema": {
-                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
-                        }
-                    }
-                }
-            }
-        },
-        "/workflows/{id}": {
-            "get": {
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "workflows"
-                ],
-                "summary": "Get a workflow version",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workflow definition ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/approval-engine-service_internal_domain.WorkflowDefinition"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "404": {
-                        "description": "not found",
-                        "schema": {
-                            "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
-                        }
-                    }
-                }
-            }
-        },
-        "/workflows/{id}/deactivate": {
-            "post": {
-                "description": "Stops the version from being used for new requests. Never a hard delete — past requests still reference this definition_id and must stay readable.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "workflows"
-                ],
-                "summary": "Deactivate a workflow version",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Workflow definition ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/approval-engine-service_pkg_response.Envelope"
                         }
@@ -963,10 +1014,20 @@
                 "condition": {
                     "$ref": "#/definitions/approval-engine-service_internal_domain.Condition"
                 },
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/approval-engine-service_internal_domain.Condition"
+                    }
+                },
                 "definition_id": {
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "logic": {
+                    "description": "LogicAll (default) or LogicAny; only used with Conditions",
                     "type": "string"
                 },
                 "name": {
@@ -1130,6 +1191,20 @@
                 "condition": {
                     "$ref": "#/definitions/approval-engine-service_internal_domain.Condition"
                 },
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/approval-engine-service_internal_domain.Condition"
+                    }
+                },
+                "logic": {
+                    "type": "string",
+                    "enum": [
+                        "all",
+                        "any"
+                    ],
+                    "example": "all"
+                },
                 "name": {
                     "type": "string",
                     "example": "Supervisor Approval"
@@ -1149,6 +1224,11 @@
         }
     },
     "securityDefinitions": {
+        "AdminKeyAuth": {
+            "type": "apiKey",
+            "name": "X-Admin-Key",
+            "in": "header"
+        },
         "ApiKeyAuth": {
             "type": "apiKey",
             "name": "X-API-Key",

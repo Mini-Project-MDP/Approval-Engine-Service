@@ -169,9 +169,16 @@ definitions:
         type: string
       condition:
         $ref: '#/definitions/approval-engine-service_internal_domain.Condition'
+      conditions:
+        items:
+          $ref: '#/definitions/approval-engine-service_internal_domain.Condition'
+        type: array
       definition_id:
         type: string
       id:
+        type: string
+      logic:
+        description: LogicAll (default) or LogicAny; only used with Conditions
         type: string
       name:
         type: string
@@ -283,6 +290,16 @@ definitions:
         type: string
       condition:
         $ref: '#/definitions/approval-engine-service_internal_domain.Condition'
+      conditions:
+        items:
+          $ref: '#/definitions/approval-engine-service_internal_domain.Condition'
+        type: array
+      logic:
+        enum:
+        - all
+        - any
+        example: all
+        type: string
       name:
         example: Supervisor Approval
         type: string
@@ -299,11 +316,90 @@ info:
   contact: {}
   description: |-
     Reusable approval workflow engine shared across Mayora internal systems (asset management first). A consuming app's requester_id/user_id are always checked against registered, active participants — the engine never trusts an identity blindly.
-    Auth: only POST /requests requires X-API-Key (a consuming application's server-to-server key — never expose it in a browser). Everything else is reached via the internal portal and relies on unguessable UUIDs plus the engine's own "are you the assigned approver" check.
+    Auth: every /requests route requires X-API-Key (a consuming application's server-to-server key — never expose it in a browser), and an application only ever sees and decides its own requests. /participants/import requires the operator X-Admin-Key. /portal/* serves the browser portal and can be switched off with PORTAL_ENABLED=false until SSO login is in place.
   title: Approval Engine API
   version: "1.0"
 paths:
-  /applications:
+  /assignments/{id}/qr:
+    get:
+      description: PNG QR code encoding a signed verify link for this assignment,
+        meant to be printed on a paper document as a "signature" stamp. Not a certified/legally-binding
+        e-signature — a tamper-evident proof that an approval genuinely happened in
+        this engine.
+      parameters:
+      - description: Assignment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - image/png
+      responses:
+        "200":
+          description: image/png
+          schema:
+            type: file
+        "404":
+          description: assignment not found
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Approval stamp QR code
+      tags:
+      - signature
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Health check
+      tags:
+      - health
+  /participants/import:
+    post:
+      consumes:
+      - application/json
+      description: 'Upserts by user_id (NIK) in one transaction — a partial failure
+        never leaves the table half-updated. Rows may reference a superior_id that
+        appears later in the same array (or not at all yet); foreign keys are deferred
+        to commit time, so the array does not need to be topologically sorted. Operator-only
+        (X-Admin-Key): the org chart is shared by every consuming application, so
+        no single application''s X-API-Key may rewrite it.'
+      parameters:
+      - description: Participants to import
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.ImportBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+        "401":
+          description: missing or invalid X-Admin-Key
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+        "503":
+          description: ADMIN_API_KEY not configured on this deployment
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      security:
+      - AdminKeyAuth: []
+      summary: Import participants (e.g. from a FICOM export)
+      tags:
+      - participants
+  /portal/applications:
     get:
       description: Never includes api_key — this is a read view for the management
         UI, not a way to recover a lost key.
@@ -366,45 +462,7 @@ paths:
       summary: Register a consuming application
       tags:
       - applications
-  /assignments/{id}/qr:
-    get:
-      description: PNG QR code encoding a signed verify link for this assignment,
-        meant to be printed on a paper document as a "signature" stamp. Not a certified/legally-binding
-        e-signature — a tamper-evident proof that an approval genuinely happened in
-        this engine.
-      parameters:
-      - description: Assignment ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - image/png
-      responses:
-        "200":
-          description: image/png
-          schema:
-            type: file
-        "404":
-          description: assignment not found
-          schema:
-            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-      summary: Approval stamp QR code
-      tags:
-      - signature
-  /health:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-      summary: Health check
-      tags:
-      - health
-  /inbox/{userID}:
+  /portal/inbox/{userID}:
     get:
       description: Everything pending this approver's decision, across every consuming
         application — the "one inbox for every system" promise of a centralized approval
@@ -438,7 +496,7 @@ paths:
       summary: Approver inbox
       tags:
       - inbox
-  /participants:
+  /portal/participants:
     get:
       parameters:
       - description: Page number (default 1)
@@ -464,21 +522,111 @@ paths:
       summary: List participants
       tags:
       - participants
-  /participants/import:
+  /portal/workflows:
+    get:
+      description: Every version of every workflow (optionally filtered by app_id),
+        for the management list view.
+      parameters:
+      - description: Filter by application ID
+        in: query
+        name: app_id
+        type: string
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_pkg_response.Page'
+              type: object
+      summary: List workflows
+      tags:
+      - workflows
     post:
       consumes:
       - application/json
-      description: Upserts by user_id (NIK) in one transaction — a partial failure
-        never leaves the table half-updated. Rows may reference a superior_id that
-        appears later in the same array (or not at all yet); foreign keys are deferred
-        to commit time, so the array does not need to be topologically sorted.
+      description: Always inserts a brand new version and atomically deactivates every
+        other version of (app_id, doc_type) — same call whether the pair is new or
+        already exists. In-flight requests keep running against the exact version
+        they started with. Each step's resolver_rule/condition is validated immediately
+        (unknown type, missing field, bad operator all fail here, not silently at
+        resolve time). A step gates on either the single `condition` field or the
+        compound `conditions`+`logic` fields ("all"/"any"), never both.
       parameters:
-      - description: Participants to import
+      - description: Workflow to publish
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_handler.ImportBody'
+          $ref: '#/definitions/internal_handler.PublishWorkflowBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_internal_domain.WorkflowDefinition'
+              type: object
+        "400":
+          description: validation error
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Publish a workflow (create or edit)
+      tags:
+      - workflows
+  /portal/workflows/{id}:
+    get:
+      parameters:
+      - description: Workflow definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/approval-engine-service_internal_domain.WorkflowDefinition'
+              type: object
+        "404":
+          description: not found
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      summary: Get a workflow version
+      tags:
+      - workflows
+  /portal/workflows/{id}/deactivate:
+    post:
+      description: Stops the version from being used for new requests. Never a hard
+        delete — past requests still reference this definition_id and must stay readable.
+      parameters:
+      - description: Workflow definition ID
+        in: path
+        name: id
+        required: true
+        type: string
       produces:
       - application/json
       responses:
@@ -486,13 +634,13 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-        "400":
-          description: Bad Request
+        "404":
+          description: not found
           schema:
             $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-      summary: Import participants (e.g. from a FICOM export)
+      summary: Deactivate a workflow version
       tags:
-      - participants
+      - workflows
   /requests:
     post:
       consumes:
@@ -545,9 +693,9 @@ paths:
       - requests
   /requests/{id}:
     get:
-      description: 'Full request with materialized steps and assignment snapshots.
-        Not gated behind an API key: both the consuming app and the approver portal
-        need to read this, and the id itself is an unguessable UUID.'
+      description: Full request with materialized steps and assignment snapshots.
+        An application can only read its own requests — another application's request
+        id answers 404, so a key never reveals other apps' data.
       parameters:
       - description: Request ID
         in: path
@@ -566,10 +714,16 @@ paths:
                 data:
                   $ref: '#/definitions/approval-engine-service_internal_domain.ApprovalRequest'
               type: object
+        "401":
+          description: missing or invalid X-API-Key
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
         "404":
           description: not found
           schema:
             $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      security:
+      - ApiKeyAuth: []
       summary: Get a request
       tags:
       - requests
@@ -577,9 +731,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: The engine enforces that user_id is the person assigned to the
-        currently active step (and still an active participant) — this handler does
-        not independently verify the caller's identity beyond that.
+      description: The calling application vouches for user_id (it has already authenticated
+        that person in its own session); the engine then enforces that user_id is
+        the person assigned to the currently active step and still an active participant.
+        An application can only decide its own requests.
       parameters:
       - description: Request ID
         in: path
@@ -608,6 +763,16 @@ paths:
           description: not the assigned approver, already decided, or invalid decision
           schema:
             $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+        "401":
+          description: missing or invalid X-API-Key
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+        "404":
+          description: not found
+          schema:
+            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
+      security:
+      - ApiKeyAuth: []
       summary: Approve or reject the active step
       tags:
       - requests
@@ -644,121 +809,11 @@ paths:
       summary: Verify an approval stamp
       tags:
       - signature
-  /workflows:
-    get:
-      description: Every version of every workflow (optionally filtered by app_id),
-        for the management list view.
-      parameters:
-      - description: Filter by application ID
-        in: query
-        name: app_id
-        type: string
-      - description: Page number (default 1)
-        in: query
-        name: page
-        type: integer
-      - description: Items per page (default 20, max 100)
-        in: query
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/approval-engine-service_pkg_response.Page'
-              type: object
-      summary: List workflows
-      tags:
-      - workflows
-    post:
-      consumes:
-      - application/json
-      description: Always inserts a brand new version and atomically deactivates every
-        other version of (app_id, doc_type) — same call whether the pair is new or
-        already exists. In-flight requests keep running against the exact version
-        they started with. Each step's resolver_rule/condition is validated immediately
-        (unknown type, missing field, bad operator all fail here, not silently at
-        resolve time).
-      parameters:
-      - description: Workflow to publish
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/internal_handler.PublishWorkflowBody'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            allOf:
-            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/approval-engine-service_internal_domain.WorkflowDefinition'
-              type: object
-        "400":
-          description: validation error
-          schema:
-            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-      summary: Publish a workflow (create or edit)
-      tags:
-      - workflows
-  /workflows/{id}:
-    get:
-      parameters:
-      - description: Workflow definition ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/approval-engine-service_internal_domain.WorkflowDefinition'
-              type: object
-        "404":
-          description: not found
-          schema:
-            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-      summary: Get a workflow version
-      tags:
-      - workflows
-  /workflows/{id}/deactivate:
-    post:
-      description: Stops the version from being used for new requests. Never a hard
-        delete — past requests still reference this definition_id and must stay readable.
-      parameters:
-      - description: Workflow definition ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/approval-engine-service_pkg_response.Envelope'
-      summary: Deactivate a workflow version
-      tags:
-      - workflows
 securityDefinitions:
+  AdminKeyAuth:
+    in: header
+    name: X-Admin-Key
+    type: apiKey
   ApiKeyAuth:
     in: header
     name: X-API-Key

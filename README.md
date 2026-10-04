@@ -61,24 +61,31 @@ swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
 
 See `/swagger/index.html` (above) for the interactive, authoritative reference — request/response schemas, try-it-out, everything. This table is just an index.
 
-Auth is deliberately light for a 3-day MVP: only *creating* a request requires proof of which application is calling (`X-API-Key`). Everything else is reached by the centralized approver portal or a scanned document link and relies on unguessable UUIDs plus the engine's own "are you the assigned approver" check.
+Routes are split by who is calling, because each kind of caller proves its identity differently:
+
+- **Application** (a consuming app's backend, e.g. asset-system): `X-API-Key`. An application only ever sees and decides **its own** requests — another app's request id answers `404`. The app vouches for the `user_id` it sends (it already authenticated that person); the engine still checks they are the assigned approver.
+- **Operator** (ops tooling such as `cmd/importficom`): `X-Admin-Key` = `ADMIN_API_KEY`. Only for the org chart import, which every app shares, so no single app's key may rewrite it. Empty `ADMIN_API_KEY` switches the endpoint off.
+- **Portal** (the browser portal, `/api/v1/portal/...`): no real user login yet — the user is just the NIK the portal sends. Switch the whole group off with `PORTAL_ENABLED=false` until SSO login replaces it.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/api/v1/requests` | `X-API-Key` | Start a request. Idempotent on `(app, doc_type, resource_id)`. |
-| GET | `/api/v1/requests/:id` | — | Full request with steps + assignments. |
-| POST | `/api/v1/requests/:id/decision` | — | `{"user_id","decision":"approved"|"rejected","comment"}`. |
-| GET | `/api/v1/inbox/:userID` | — | Everything pending this approver, across every consuming app. |
+| GET | `/api/v1/requests/:id` | `X-API-Key` | Full request with steps + assignments (own app only). |
+| POST | `/api/v1/requests/:id/decision` | `X-API-Key` | `{"user_id","decision":"approved"|"rejected","comment"}` (own app only). |
+| POST | `/api/v1/participants/import` | `X-Admin-Key` | Upsert the org chart (e.g. from FICOM). |
 | GET | `/api/v1/assignments/:id/qr` | — | PNG stamp for a printed document (see below). |
 | GET | `/api/v1/verify/:id?sig=...` | HMAC in URL | Public: confirms the stamp is genuine and reports the assignment's live status. |
-| POST | `/api/v1/applications` | — | Register a consuming app, returns its `api_key` **once**. |
-| GET | `/api/v1/applications` | — | List apps (never includes `api_key`). |
-| POST | `/api/v1/workflows` | — | Publish a workflow: create if `(app_id, doc_type)` is new, "edit" if it already exists — same call either way (see below). |
-| GET | `/api/v1/workflows?app_id=` | — | List every version of every workflow. |
-| GET | `/api/v1/workflows/:id` | — | One version with its steps. |
-| POST | `/api/v1/workflows/:id/deactivate` | — | Stop a version from being used for new requests (never a hard delete). |
+| GET | `/api/v1/portal/inbox/:userID` | portal | Everything pending this approver, across every consuming app. |
+| GET/POST | `/api/v1/portal/requests/:id[/decision]` | portal | Same as the app routes, for the portal's own screens. |
+| POST | `/api/v1/portal/applications` | portal | Register a consuming app, returns its `api_key` **once**. |
+| GET | `/api/v1/portal/applications` | portal | List apps (never includes `api_key`). |
+| POST | `/api/v1/portal/workflows` | portal | Publish a workflow: create if `(app_id, doc_type)` is new, "edit" if it already exists — same call either way (see below). |
+| GET | `/api/v1/portal/workflows?app_id=` | portal | List every version of every workflow. |
+| GET | `/api/v1/portal/workflows/:id` | portal | One version with its steps. |
+| POST | `/api/v1/portal/workflows/:id/deactivate` | portal | Stop a version from being used for new requests (never a hard delete). |
+| GET | `/api/v1/portal/participants` | portal | List the org chart. |
 
-Workflow/application management has no role gate yet either — reachable by anyone who can reach the portal. Accepted gap for the 3-day demo scope, not an oversight; a real deployment needs an `is_admin` check on these routes.
+Known gap until SSO login lands: portal routes trust the NIK the browser sends and have no admin role check, so anyone who can reach an enabled portal can act as any approver and manage workflows. Production deployments that cannot accept that should run with `PORTAL_ENABLED=false`.
 
 ### Editing a workflow = publishing a new version
 

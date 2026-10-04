@@ -26,7 +26,7 @@ Minta tim dashboard registrasikan aplikasi (kalau belum ada) lewat halaman Appli
 Approval-Engine-Client, atau langsung:
 
 ```bash
-curl -X POST "$ENGINE_URL/api/v1/applications" \
+curl -X POST "$ENGINE_URL/api/v1/portal/applications" \
   -H "Content-Type: application/json" \
   -d '{
     "code": "assetmgmt",
@@ -56,6 +56,7 @@ asset-system. Approver tidak bisa di-resolve kalau NIK-nya belum ada di sini.
 ```bash
 curl -X POST "$ENGINE_URL/api/v1/participants/import" \
   -H "Content-Type: application/json" \
+  -H "X-Admin-Key: $ENGINE_ADMIN_KEY" \
   -d '{
     "participants": [
       {
@@ -81,7 +82,7 @@ milik asset-system sendiri — join tabel `users` + `m_employee`, kirim batch ke
 
 **Verifikasi:**
 ```bash
-curl "$ENGINE_URL/api/v1/participants?limit=5"
+curl "$ENGINE_URL/api/v1/portal/participants?limit=5"
 ```
 Pastikan orang yang akan dipakai untuk uji coba di Langkah 7 (requester dan tiap approver di
 rantai persetujuan) muncul dengan `is_active: true`.
@@ -99,7 +100,7 @@ untuk pola retry kalau sync pertama gagal.
 `internal/pkg/service/request_service.go` milik asset-system).
 
 ```bash
-curl "$ENGINE_URL/api/v1/workflows?app_id=assetmgmt"
+curl "$ENGINE_URL/api/v1/portal/workflows?app_id=assetmgmt"
 ```
 
 Pastikan ada satu versi `is_active: true` untuk **masing-masing** `doc_type` di atas. Kalau
@@ -146,6 +147,7 @@ method `CreateRequest`.
 ```bash
 curl -X POST "$ENGINE_URL/api/v1/requests/{request_id}/decision" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $APPROVAL_ENGINE_API_KEY" \
   -d '{
     "user_id": "SS01",
     "decision": "approved",
@@ -163,13 +165,12 @@ curl -X POST "$ENGINE_URL/api/v1/requests/{request_id}/decision" \
 - `{request_id}` di URL adalah **id yang dikembalikan engine** saat create (bukan
   `resource_id` milik asset-system) — simpan dari response Langkah 4.
 
-**Catatan keterbatasan yang perlu diketahui (bukan penghalang integrasi):** endpoint ini saat
-ini belum digerbangi `X-API-Key` — engine memercayai `user_id` yang dikirim. Ini berarti
-tanggung jawab memastikan `user_id` benar-benar berasal dari user yang sedang login ada
-sepenuhnya di backend asset-system (bukan di engine). Selama asset-system sudah
-mengautentikasi user-nya sendiri sebelum meneruskan keputusan ke sini, alur ini aman
-dipakai — poin ini murni informasi transparansi, bukan langkah tambahan yang perlu
-dikerjakan PIC.
+**Keamanan:** endpoint ini (dan `GET /requests/{id}`) wajib `X-API-Key`, dan engine hanya
+mengizinkan aplikasi membaca/memutuskan request **miliknya sendiri** (request aplikasi lain
+dijawab `404`). Engine memercayai `user_id` yang dikirim aplikasi karena aplikasi sudah
+mengautentikasi user-nya sendiri — jadi `user_id` wajib diambil dari sesi login di backend
+asset-system, bukan dari input form. Engine tetap mengecek bahwa `user_id` adalah approver
+yang ditugaskan di step aktif.
 
 ---
 

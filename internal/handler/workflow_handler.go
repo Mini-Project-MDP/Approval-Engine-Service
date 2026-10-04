@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/gofiber/fiber/v2"
@@ -62,7 +63,7 @@ type PublishWorkflowBody struct {
 // @Param body body PublishWorkflowBody true "Workflow to publish"
 // @Success 201 {object} response.Envelope{data=domain.WorkflowDefinition}
 // @Failure 400 {object} response.Envelope "validation error"
-// @Router /workflows [post]
+// @Router /portal/workflows [post]
 func (h *WorkflowHandler) Create(c *fiber.Ctx) error {
 	var body PublishWorkflowBody
 	if err := c.BodyParser(&body); err != nil {
@@ -117,7 +118,7 @@ func (h *WorkflowHandler) Create(c *fiber.Ctx) error {
 // @Param page query int false "Page number (default 1)"
 // @Param limit query int false "Items per page (default 20, max 100)"
 // @Success 200 {object} response.Envelope{data=response.Page}
-// @Router /workflows [get]
+// @Router /portal/workflows [get]
 func (h *WorkflowHandler) List(c *fiber.Ctx) error {
 	page, limit := parsePagination(c)
 	defs, total, err := h.workflows.ListDefinitions(c.Context(), c.Query("app_id"), page, limit)
@@ -135,7 +136,7 @@ func (h *WorkflowHandler) List(c *fiber.Ctx) error {
 // @Param id path string true "Workflow definition ID"
 // @Success 200 {object} response.Envelope{data=domain.WorkflowDefinition}
 // @Failure 404 {object} response.Envelope "not found"
-// @Router /workflows/{id} [get]
+// @Router /portal/workflows/{id} [get]
 func (h *WorkflowHandler) Get(c *fiber.Ctx) error {
 	def, err := h.workflows.GetDefinitionByID(c.Context(), c.Params("id"))
 	if err != nil {
@@ -155,9 +156,13 @@ func (h *WorkflowHandler) Get(c *fiber.Ctx) error {
 // @Produce json
 // @Param id path string true "Workflow definition ID"
 // @Success 200 {object} response.Envelope
-// @Router /workflows/{id}/deactivate [post]
+// @Failure 404 {object} response.Envelope "not found"
+// @Router /portal/workflows/{id}/deactivate [post]
 func (h *WorkflowHandler) Deactivate(c *fiber.Ctx) error {
 	if err := h.workflows.Deactivate(c.Context(), c.Params("id")); err != nil {
+		if errors.Is(err, domain.ErrWorkflowNotFound) {
+			return response.Error(c, fiber.StatusNotFound, err.Error())
+		}
 		return response.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
 	return response.Success(c, fiber.StatusOK, "workflow deactivated", nil)
